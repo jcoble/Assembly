@@ -87,7 +87,10 @@ gpui_kit::assets::icon_assets!(
         ShieldAlert,
         FolderPlus,
         Link,
-        Monitor
+        Monitor,
+        ArrowDownAZ,
+        ArrowUpZA,
+        FilePlus
     ]
 );
 

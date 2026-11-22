@@ -90,6 +90,10 @@ pub const KEY_COLUMN_WIDTH: Pixels = px(108.);
 pub const CONNECTION_ROW_HEIGHT: Pixels = px(56.);
 /// A file row.
 pub const FILE_ROW_HEIGHT: Pixels = px(32.);
+/// Between a file row's mark, name and folder.
+pub const FILE_ROW_GAP: Pixels = px(9.);
+/// A row in the Files tab's tree.
+pub const TREE_ROW_HEIGHT: Pixels = px(30.);
 /// A count badge's height and narrowest width, as Board's count.
 pub const COUNT_HEIGHT: Pixels = px(20.);
 pub const COUNT_MIN_WIDTH: Pixels = px(22.);

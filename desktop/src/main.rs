@@ -9,14 +9,22 @@ mod features;
 mod components {
     #[path = "chip_button.rs"]
     pub mod chip_button;
+    #[path = "file_row.rs"]
+    pub mod file_row;
     #[path = "glass_button.rs"]
     pub mod glass_button;
+    #[path = "heading_label.rs"]
+    pub mod heading_label;
     #[path = "icon_segments.rs"]
     pub mod icon_segments;
+    #[path = "match_text.rs"]
+    pub mod match_text;
     #[path = "picker_pill.rs"]
     pub mod picker_pill;
     #[path = "quiet_button.rs"]
     pub mod quiet_button;
+    #[path = "search_field.rs"]
+    pub mod search_field;
 }
 #[path = "components/hinted_item/mod.rs"]
 mod hinted_item;

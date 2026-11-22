@@ -7,13 +7,13 @@
 //! after the placeholders.
 
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_FIELD, CORNER_PILL, FIELD_HEIGHT, SPACE};
+use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_PILL, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::input::{Escape, InputEvent, InputState};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -25,6 +25,7 @@ use super::list_entry::ListEntry;
 use super::new_session_form::NewSessionForm;
 use super::rail_page::{Rail, RailPage, Request};
 use super::view_options::{OnView, VIEW_KEY, View, saved_view, view_options};
+use crate::components::search_field::search_field;
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
@@ -42,8 +43,6 @@ use crate::core::ui::provider_name::provider_name;
 const RAIL_TOPIC: &str = "sessionRail";
 /// An icon in the column's buttons and field.
 const ICON_SIZE: Pixels = px(16.);
-/// Between the search field's glass and its words.
-const FIELD_ICON_GAP: Pixels = px(9.);
 
 /// The pills' picks among the backend's preferences.
 const FILTERS_KEY: &str = "rail.filters";
@@ -393,24 +392,8 @@ impl SessionsPane {
         new_session: Button,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let look = Look::of(cx);
-        // The mock's search: the kit's field, inset in the tile with its outline, a text-3 glass before the words.
-        let field = Input::new(&self.filter)
-            .small()
-            .control(ids::SEARCH, "Search sessions")
-            .prefix(
-                Icon::new(IconName::Search)
-                    .size(ICON_SIZE)
-                    .text_color(look.text_3),
-            )
-            .flex_1()
-            .min_w_0()
-            .h(FIELD_HEIGHT)
-            .px(SPACE[5])
-            .gap(FIELD_ICON_GAP)
-            .rounded(CORNER_FIELD)
-            .bg(look.inset)
-            .border_color(look.line);
+        // The mock's search, the shared field; Escape below clears it.
+        let field = search_field(&self.filter, cx).control(ids::SEARCH, "Search sessions");
         h_flex()
             .pt(SPACE[5])
             .px(SPACE[4])

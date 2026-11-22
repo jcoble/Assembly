@@ -1,32 +1,46 @@
 //! `SearchPane` finds files and folders in the selected session's folder whose name holds what's typed
 //! (`files/search`). Typing waits `DEBOUNCE`, then searches; the wait and the call are one task the pane holds, so a
 //! newer search, a session switch or closing the pane drops the older one, which cancels its call on the backend.
-//! "More" loads the next page the same way. It registers under the Search pane's name, after the placeholders.
+//! "More" loads the next page the same way. It registers under the Search pane's name, after the placeholders. It is
+//! drawn as the look's search: the shared field, the Names and Content segments, then each group of results under its
+//! heading and count, in the shared file rows with the typed letters picked out.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::time::Duration;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
 use super::entry::{ContentMatch, NameMatch, SearchResult};
 use super::file_view::FileView;
-use super::files_pane::TREE_LINE;
+use crate::components::file_row::file_row;
+use crate::components::heading_label::heading_label;
+use crate::components::match_text::match_text;
+use crate::components::search_field::search_field;
 use crate::core::intents::reveal_file_folder::RevealFileFolder;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_PILL, FILE_ROW_GAP, GROUP_HEIGHT, SPACE};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::search as ids;
+use crate::core::ui::file_icon::file_icon;
 use crate::core::ui::pane_names::SEARCH;
 
 /// How long typing waits before it searches.
 pub const DEBOUNCE: Duration = Duration::from_millis(150);
 /// Results per page.
 const PAGE: u32 = 100;
+/// A folder's mark, the size of a file's.
+const MARK_SIZE: Pixels = px(14.);
 
 pub struct SearchPane {
     focus: FocusHandle,
@@ -208,22 +222,39 @@ impl SearchPane {
         }
     }
 
+    /// A line in a file holding what's typed, the look's "In conversations" row: the file's mark and the line's words
+    /// with the typed letters picked out, then where it is in Meta text-3. A click opens the file at that place.
     fn content_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let found = &self.content[ix];
+        let look = Look::of(cx);
         let row_session = self.session.clone();
         let row_source = self.source.clone();
         let (path, line, column) = (found.path.clone(), found.line, found.column);
-        v_flex()
-            .id(("content", ix))
-            .px_2()
-            .py_1()
-            .cursor_pointer()
-            .child(format!("{}:{}:{}", found.path, line, column))
+        file_row(("content", ix), false, cx)
+            .h_auto()
+            .py(SPACE[2])
             .child(
-                div()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(found.excerpt.clone()),
+                h_flex()
+                    .items_start()
+                    .gap(FILE_ROW_GAP)
+                    .min_w_0()
+                    .child(file_icon(format!("content-mark:{ix}"), &found.path, cx).mt(SPACE[0]))
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .child(div().truncate().text_color(look.text_2).child(match_text(
+                                found.excerpt.trim().to_string(),
+                                &self.query,
+                                cx,
+                            )))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(look.text_3)
+                                    .child(format!("{}:{}:{}", found.path, line, column)),
+                            ),
+                    ),
             )
             .on_click(cx.listener(move |pane, _, window, cx| {
                 if pane.session != row_session || pane.source != row_source {
@@ -251,12 +282,14 @@ impl SearchPane {
         }
     }
 
+    /// A file or folder whose name holds what's typed, the shared file row: its mark, the name with the typed letters
+    /// picked out, then its folder in Meta text-3, which ends in "…" when the column is narrow. A click opens the file,
+    /// or shows a folder in the Files tab.
     fn row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let found = &self.matches[ix];
+        let look = Look::of(cx);
         let row_session = self.session.clone();
         let row_source = self.source.clone();
-        let theme = cx.theme();
-        let (muted, accent, secondary) = (theme.muted_foreground, theme.accent, theme.secondary);
         let picked = self.selected.as_deref() == Some(found.path.as_str());
         let path = found.path.clone();
         let folder_hit = found.is_directory;
@@ -264,37 +297,37 @@ impl SearchPane {
             .relative_path
             .rsplit_once('/')
             .map_or("", |(folder, _)| folder);
-        h_flex()
-            .id(ix)
-            .w_full()
-            .h(TREE_LINE)
-            .px_2()
-            .gap_2()
-            .rounded(px(6.))
-            .cursor_pointer()
-            .whitespace_nowrap()
-            .overflow_hidden()
-            .when(picked, |row| row.bg(secondary))
-            .when(!picked, |row| row.hover(|row| row.bg(accent)))
+        let mark = if folder_hit {
+            Icon::new(IconName::Folder)
+                .size(MARK_SIZE)
+                .text_color(look.text_3)
+                .into_any_element()
+        } else {
+            file_icon(format!("mark:{ix}"), &found.path, cx).into_any_element()
+        };
+        file_row(ix, picked, cx)
             .child(
-                div()
-                    .flex_none()
-                    .text_role(TextRole::Title, cx)
-                    .child(format!(
-                        "{}{}",
-                        found.name,
-                        if found.is_directory { "/" } else { "" }
-                    )),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "search-folder".into())
+                h_flex()
+                    .w_full()
+                    .gap(FILE_ROW_GAP)
                     .min_w_0()
                     .overflow_hidden()
-                    .text_ellipsis()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(muted)
-                    .child(folder.to_string()),
+                    .whitespace_nowrap()
+                    .child(mark)
+                    .child(div().flex_none().text_color(look.text_2).child(match_text(
+                        found.name.clone(),
+                        &self.query,
+                        cx,
+                    )))
+                    .child(
+                        div()
+                            .debug_selector(|| "search-folder".into())
+                            .min_w_0()
+                            .truncate()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(look.text_3)
+                            .child(folder.to_string()),
+                    ),
             )
             .on_click(cx.listener(move |pane, _, window, cx| {
                 if pane.session != row_session || pane.source != row_source {
@@ -367,107 +400,130 @@ impl Panel for SearchPane {
     }
 }
 
+impl SearchPane {
+    /// The two ways to search, the kit's segmented bar with the look's outline on its track: by name, or by what a
+    /// file holds. Picking one searches again.
+    fn modes(&self, cx: &mut Context<Self>) -> TabBar {
+        let mode = |label: &'static str, mode: &'static str| {
+            Tab::new()
+                .label(label)
+                .on_click(cx.listener(move |pane, _, _, cx| {
+                    pane.mode = mode;
+                    pane.search(pane.query.clone(), Duration::ZERO, cx);
+                }))
+        };
+        TabBar::new("search-modes")
+            .segmented()
+            .small()
+            .flex_none()
+            .border_1()
+            .border_color(Look::of(cx).line)
+            .selected_index(usize::from(self.mode != "name"))
+            .child(mode("Names", "name"))
+            .child(mode("Content", "content"))
+    }
+
+    /// A group of results under its heading and count, the ⌘K search's "Files 2"; a "+" says more pages wait.
+    fn heading(&self, title: &'static str, count: usize, cx: &App) -> Div {
+        let more = if self.next.is_some() { "+" } else { "" };
+        h_flex()
+            .h(GROUP_HEIGHT)
+            .flex_none()
+            .px(SPACE[4])
+            .child(heading_label(title, Some(format!("{count}{more}")), cx))
+    }
+}
+
 impl Render for SearchPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let modes = self.modes(cx);
+        let look = Look::of(cx);
+        // A status line in Meta: text-3, or the problem colour for an error.
         let line = |text: String| {
             div()
-                .px_3()
-                .py_1()
-                .text_role(TextRole::Body, cx)
+                .px(SPACE[4])
+                .py(SPACE[2])
+                .text_role(TextRole::Meta, cx)
+                .text_color(look.text_3)
                 .child(text)
         };
         let status = if self.session.is_none() {
-            Some(line("Pick a session to search its files.".into()).text_color(muted))
+            Some(line("Pick a session to search its files.".into()))
         } else if let Some(error) = &self.error {
-            Some(line(error.clone()).text_color(danger))
+            Some(line(error.clone()).text_color(look.problem))
         } else if self.searching.is_some() && self.matches.is_empty() && self.content.is_empty() {
-            Some(line("Searching…".into()).text_color(muted))
+            Some(line("Searching…".into()))
         } else if !self.query.is_empty() && self.matches.is_empty() && self.content.is_empty() {
-            Some(
-                line(format!(
-                    "No {} matches for \u{201c}{}\u{201d}.",
-                    self.mode, self.query
-                ))
-                .text_color(muted),
-            )
+            Some(line(format!(
+                "No {} matches for \u{201c}{}\u{201d}.",
+                self.mode, self.query
+            )))
         } else {
             None
         };
+        let (names, lines) = (self.matches.len(), self.content.len());
         v_flex()
             .track_focus(&self.focus)
             .size_full()
+            // The top line, as in Sessions: the shared search field.
             .child(
                 h_flex()
-                    .px_2()
-                    .py_1()
-                    .gap_1()
-                    .child(Button::new("search-names").ghost().label("Names").on_click(
-                        cx.listener(|pane, _, _, cx| {
-                            pane.mode = "name";
-                            pane.search(pane.query.clone(), Duration::ZERO, cx);
-                        }),
-                    ))
-                    .child(
-                        Button::new("search-content")
-                            .ghost()
-                            .label("Content")
-                            .on_click(cx.listener(|pane, _, _, cx| {
-                                pane.mode = "content";
-                                pane.search(pane.query.clone(), Duration::ZERO, cx);
-                            })),
-                    ),
+                    .pt(SPACE[5])
+                    .px(SPACE[4])
+                    .child(search_field(&self.input, cx).control(ids::FIELD, "Search files")),
             )
-            .child(div().px_2().py_2().child(Input::new(&self.input)))
+            // Then what to search, where Sessions has its filters.
+            .child(h_flex().pt(SPACE[3]).px(SPACE[4]).child(modes))
             .when(self.skipped > 0 || self.truncated, |pane| {
-                pane.child(
-                    line(format!(
-                        "{} files skipped{}",
-                        self.skipped,
-                        if self.truncated {
-                            "; scan reached its size limit"
-                        } else {
-                            ""
-                        }
-                    ))
-                    .text_color(muted),
-                )
+                pane.child(line(format!(
+                    "{} files skipped{}",
+                    self.skipped,
+                    if self.truncated {
+                        "; scan reached its size limit"
+                    } else {
+                        ""
+                    }
+                )))
             })
             .children(status)
-            .when(!self.matches.is_empty(), |pane| {
-                pane.child(
+            .when(names > 0, |pane| {
+                pane.child(self.heading("Files", names, cx)).child(
                     uniform_list(
                         "search-results",
-                        self.matches.len(),
+                        names,
                         cx.processor(|pane, range: std::ops::Range<usize>, _window, cx| {
                             range.map(|ix| pane.row(ix, cx)).collect()
                         }),
                     )
                     .track_scroll(&self.list)
                     .flex_1()
-                    .px_1(),
+                    .px(SPACE[3]),
                 )
             })
-            .when(!self.content.is_empty(), |pane| {
-                pane.child(
+            .when(lines > 0, |pane| {
+                pane.child(self.heading("In files", lines, cx)).child(
                     uniform_list(
                         "content-results",
-                        self.content.len(),
+                        lines,
                         cx.processor(|pane, range: std::ops::Range<usize>, _, cx| {
                             range.map(|ix| pane.content_row(ix, cx)).collect()
                         }),
                     )
                     .track_scroll(&self.list)
-                    .flex_1(),
+                    .flex_1()
+                    .px(SPACE[3]),
                 )
             })
+            // The next page, the kit's quiet button in text-2.
             .when(self.next.is_some(), |pane| {
                 pane.child(
-                    h_flex().px_2().py_1().child(
+                    h_flex().px(SPACE[4]).py(SPACE[2]).child(
                         Button::new("search-more")
+                            .control(ids::MORE, "Load more results")
                             .ghost()
-                            .compact()
+                            .small()
+                            .rounded(CORNER_PILL)
+                            .text_color(look.text_2)
                             .label(if self.searching.is_some() {
                                 "Loading…"
                             } else {

@@ -10,8 +10,9 @@ use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 use std::time::Duration;
 
+use crate::components::heading_label::heading_label;
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{GROUP_HEIGHT, SPACE};
+use crate::core::theme::metrics::GROUP_HEIGHT;
 
 /// The name and count, for a heading that doesn't fold as well as one that does.
 /// A count beside a heading or the branch: body-sized text in a pill no taller than its row.
@@ -24,21 +25,6 @@ pub fn count_chip(count: impl Into<SharedString>, cx: &App) -> impl IntoElement 
         .child(count.into())
 }
 pub const CHIP_HEIGHT: Pixels = px(20.);
-pub fn heading_label(title: &'static str, count: Option<String>, cx: &App) -> Div {
-    let look = Look::of(cx);
-    h_flex()
-        .gap(SPACE[2])
-        .text_role(TextRole::Meta, cx)
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(look.text_2)
-        .child(title)
-        .children(count.map(|count| {
-            div()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(look.text_3)
-                .child(count)
-        }))
-}
 pub fn section_heading(
     id: impl Into<SharedString>,
     title: &'static str,

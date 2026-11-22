@@ -48,6 +48,16 @@ ids! {
         RAIL_ERROR = "sessions.rail-error",
         RETRY = "sessions.retry",
     }
+    files {
+        SHOW_EXCLUDED = "files.show-excluded",
+        SORT = "files.sort",
+        NEW_FILE = "files.new-file",
+        REFRESH = "files.refresh",
+    }
+    search {
+        FIELD = "search.field",
+        MORE = "search.more",
+    }
     utility {
         SETTINGS = "utility.settings",
         RESOURCES = "utility.resources",
