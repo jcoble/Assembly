@@ -72,7 +72,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
     let strip = revealing(&tabs, selected, window, cx);
     let chips = tabs
         .into_iter()
-        .map(|tab| tab_of(tab, &dock, window, cx))
+        .map(|tab| tab_of(tab, &dock, cx))
         .collect::<Vec<_>>();
     TabBar::new("chrome-content-tabs")
         .segmented()
@@ -116,17 +116,14 @@ fn revealing(
 
 /// One tab: a click shows its pane, its x closes it through the kit's close path, a drag carries it to another
 /// group, and a tab dropped on it lands in its place.
-fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mut App) -> Tab {
+fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, cx: &mut App) -> Tab {
     let id = tab.panel.panel_id(cx);
     let name = tab.panel.panel_name(cx);
-    // What the tab is called to a screen reader: the pane's own short name when it has one (a file tab's file
-    // name), else its kind ("Chat", "Changes").
+    // What the tab is called: the pane's own short name when it has one (a file tab's file name), else its kind
+    // ("Chat", "Changes"). The chip shows it, a screen reader reads it, and the kit's menu of tabs lists it.
     let label = PanelHandle::of(&tab.panel)
         .and_then(|handle| handle.tab_name(cx))
         .unwrap_or_else(|| SharedString::from(name));
-    let title = PanelHandle::of(&tab.panel)
-        .map(|handle| handle.title(window, cx))
-        .unwrap_or_else(|| SharedString::from(name).into_any_element());
     let target = cx.theme().tokens.drop_target;
     let (select, close, drop) = (dock.clone(), dock.clone(), dock.clone());
     let panel = tab.panel.clone();
@@ -134,7 +131,7 @@ fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, window: &mut Window, cx: &mu
         .debug_selector(move || format!("top-tab-{name}"))
         .control(content_tab(name), label.clone())
         .prefix(Icon::new(icon(name)).size(TAB_GLYPH))
-        .child(title)
+        .label(label.clone())
         .on_click(move |_, window, cx| {
             cx.defer(WorkspaceCoordinator::changed);
             select.update(cx, |dock, cx| dock.select_panel(id, window, cx));
