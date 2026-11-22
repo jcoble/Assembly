@@ -47,7 +47,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
     private static async Task UpdateLocalToolsAsync(LocalReleaseTools local, ToolsBehind tools, Action<string> progress, CancellationToken ct)
     {
         try { await local.UpdateAsync(tools, progress, ct); }
-        catch (CallFailed failed) { throw new CallFailed(MachineUpdates.SafeFailure(failed), failed.Reason); }
+        catch (CallFailed failed) { throw new CallFailed(MachineUpdates.SafeFailure(failed), failed.Reason, failed.Tool); }
     }
 
     public Task<PublishedVersions> PublishedAsync(CancellationToken ct) => feed?.PublishedAsync(ct) ?? Task.FromResult(new PublishedVersions(null, null, null));

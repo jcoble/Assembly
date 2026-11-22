@@ -99,9 +99,11 @@ internal sealed record SettingsProviderMachine(
 /// <summary>
 /// Last safe failure for a provider on a machine: one plain sentence, the detail for its Details
 /// view (scrubbed raw output where this machine has it, a plain sentence otherwise — never a code),
-/// and what Try again must retry: a check, or the install/update itself.
+/// and what Try again must retry: a check, or the install/update itself. An install failure also
+/// records which operation, machine and tool failed, so blame and retry stay on that one target.
 /// </summary>
-internal sealed record SettingsFailure(string Message, string Detail, string Retry = SettingsFailure.RetryCheck)
+internal sealed record SettingsFailure(string Message, string Detail, string Retry = SettingsFailure.RetryCheck,
+    string? Operation = null, string? MachineKey = null, string? Tool = null)
 {
     internal const string RetryCheck = "check";
     internal const string RetryInstall = "install";

@@ -319,10 +319,10 @@ internal static class SettingsStateRules
         new("The check could not be started.", "Assembly could not start the check for this provider on this machine.");
 
     /// <summary>The provider's own failure when its adapter or CLI install/update failed on a machine.</summary>
-    internal static SettingsFailure InstallFailure(string? safeNote) =>
+    internal static SettingsFailure InstallFailure(string? safeNote, MachineUpdateFailure failure, string machineKey) =>
         new("The update didn't finish.",
             string.IsNullOrWhiteSpace(safeNote) ? "Installing or updating this provider didn't finish." : safeNote,
-            SettingsFailure.RetryInstall);
+            SettingsFailure.RetryInstall, failure.Operation, machineKey, failure.Tool);
 
     private static string DetailOf(string safeCode, string? prefix)
     {

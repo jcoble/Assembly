@@ -7,6 +7,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Agents;
+using Assembly.Infrastructure.Updates;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Desktop.Settings;
@@ -45,12 +46,13 @@ internal sealed class SettingsStateFeature : IFeature, IAsyncDisposable
         TimeProvider time,
         ProviderFailureDetails? failureDetails = null,
         Func<bool>? isReconciling = null,
-        Func<string, bool>? probeDidNotRun = null)
+        Func<string, bool>? probeDidNotRun = null,
+        Func<string?, MachineUpdateFailure?>? updateFailureOf = null)
     {
         _topics = topics;
         _work = work;
         ProviderEnablementStore.EnsureSchema(db);
-        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time, failureDetails, isReconciling, probeDidNotRun);
+        _composer = new SettingsStateComposer(db, launcher, machinesFeature, localEngineMachine, time, failureDetails, isReconciling, probeDidNotRun, updateFailureOf);
         _topics.Unsubscribed += OnUnsubscribed;
     }
 

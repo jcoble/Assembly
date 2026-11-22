@@ -20,6 +20,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     private const string ThisApp = "";
     private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
+    private readonly Dictionary<string, MachineUpdateFailure> _failures = [];
     private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _restarting;
 
@@ -37,12 +38,41 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     }
     private bool Updating(string? machine) { lock (_updating) return _updating.Contains(Slot(machine)); }
 
+    /// <summary>The last update failure on a machine (null is this one), with the tool it failed on when known.</summary>
+    internal MachineUpdateFailure? FailureOf(string? machine)
+    {
+        lock (_failures) return _failures.GetValueOrDefault(Slot(machine));
+    }
+
+    private void RecordFailure(string? machine, string operation, CallFailed error, string? defaultKind = null)
+    {
+        var (kind, name) = error.Tool is { } tool
+            ? tool.Split(':', 2) is [var head, var rest] ? (head, (string?)rest) : (tool, (string?)null)
+            : (defaultKind, (string?)null);
+        lock (_failures) _failures[Slot(machine)] = new(operation, kind, name);
+    }
+
+    private void RecordFailure(string? machine, string operation)
+    {
+        lock (_failures) _failures[Slot(machine)] = new(operation, null, null);
+    }
+
+    private void ClearFailure(string? machine)
+    {
+        lock (_failures) _failures.Remove(Slot(machine));
+    }
+
     public void Register(ICallRegistry calls)
     {
         calls.Read("updates", "start", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
         {
             if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
             return Task.FromResult(new UpdateStarted(Start()));
+        });
+        calls.Read("updates", "startMachine", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateStarted, (args, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(StartMachine(args.Machine)));
         });
         calls.Read("updates", "cancel", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
         {
@@ -124,7 +154,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
 
     internal void ClearLocalFailureIfIdle()
     {
-        if (!Updating(null)) status.Updating(null, false, null);
+        if (!Updating(null)) { ClearFailure(null); status.Updating(null, false, null); }
     }
 
     /// <summary>
@@ -139,6 +169,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         await TakeWhenFreeAsync(ThisApp, () => { }, stop);
         string? ending = null;
         var cancelled = false;
+        ClearFailure(null);
         status.Updating(null, true, null);
         var run = _progress.Begin(null, UpdateProgress.ThisMachine, behind.Count, downloads: false);
         try
@@ -172,8 +203,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             cancelled = true;
             throw;
         }
-        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + UpdateDidNotFinish; }
+        catch (CallFailed error) { RecordFailure(null, "update", error); ending = "Update failed: " + SafeFailure(error); }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(null, "update"); ending = "Update failed: " + UpdateDidNotFinish; }
         finally
         {
             _progress.End(UpdateProgress.ThisMachine);
@@ -242,11 +273,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             string? ending = null;
             try
             {
+                ClearFailure(machine);
                 status.Updating(machine, true, null);
                 await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
             }
-            catch (CallFailed error) { ending = "Install failed: " + SafeFailure(error); }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + UpdateDidNotFinish; }
+            catch (CallFailed error) { RecordFailure(machine, "install", error, "backend"); ending = "Install failed: " + SafeFailure(error); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(machine, "install"); ending = "Install failed: " + UpdateDidNotFinish; }
             finally
             {
                 Free(machine);
@@ -321,6 +353,17 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         return started;
     }
 
+    /// <summary>Everything behind on one machine only (null is this one): a row's Try again retries its own machine.</summary>
+    internal bool StartMachine(string? machine)
+    {
+        var item = status.Items.FirstOrDefault(candidate => candidate.Name == machine);
+        if (item is null && machine is not null) throw new CallFailed("Unknown remote machine.", "unknown_machine");
+        return item is not null
+            && (item.Name is null || item.Reachable)
+            && (item.Updates ?? []).Any(update => update.State == UpdateItem.Behind)
+            && Begin(item, automatic: false);
+    }
+
     private bool Begin(MachineItem item, bool automatic)
     {
         if (!Take(item.Name)) return false;
@@ -337,6 +380,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         var downloaded = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind && update.Kind is "desktop" or "backend");
         var pieces = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind) - downloaded;
         var readyBefore = source.AppReady;
+        ClearFailure(machine);
         status.Updating(machine, true, null);
         var run = _progress.Begin(machine, place, pieces, downloaded > 0);
         try
@@ -356,8 +400,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             // What this run got ready goes with it, so there's no Restart to Update for an update someone called off.
             if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
-        catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + UpdateDidNotFinish; }
+        catch (CallFailed error) { RecordFailure(machine, "update", error); ending = "Update failed: " + SafeFailure(error); }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(machine, "update"); ending = "Update failed: " + UpdateDidNotFinish; }
         finally
         {
             _progress.End(place);
@@ -396,4 +440,16 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             else Check(machine);
         }
     }
+}
+
+/// <summary>
+/// What the last failed update on a machine was: the operation (<c>update</c> or <c>install</c>)
+/// and the tool it failed on by kind and name (<c>adapter</c> with no name is the whole bundle),
+/// when that is known exactly. Held in memory beside the machine's update note, which has the
+/// same lifetime; nothing new is persisted.
+/// </summary>
+internal sealed record MachineUpdateFailure(string Operation, string? Kind, string? Name)
+{
+    /// <summary>The tool as one word for the panel: kind, or kind and name together.</summary>
+    internal string? Tool => Kind is null ? null : Name is null ? Kind : $"{Kind}:{Name}";
 }

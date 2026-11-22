@@ -50,7 +50,7 @@ internal sealed partial class RemoteReleaseInstall(RemoteReleaseFeed feed, Remot
             if (await source.UpdateToolsAsync(target, quoted, tools, phase, ct) is not { } adapters) return;
             phase("Installing adapters and restarting the backend…");
             try { await shell.RunAsync(target, $"set -eu; cd {quoted}; sh install.sh --adapters {Arguments(machine, adapters)}", null, ct); }
-            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason); }
+            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason, "adapter"); }
         }, ct), ct);
 
     private static string Arguments(SavedMachine machine, AdapterArguments adapters) =>

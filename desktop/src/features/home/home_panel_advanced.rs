@@ -385,10 +385,13 @@ impl HomePanel {
             let Some(client) = SocketClient::try_global(cx) else {
                 return;
             };
-            let call =
-                client
-                    .read(cx)
-                    .call::<serde_json::Value>("updates", "start", json!({}), None);
+            // Only this failure's machine: its own update start, never every machine's.
+            let call = client.read(cx).call::<serde_json::Value>(
+                "updates",
+                "startMachine",
+                json!({"machine": on.machine_key}),
+                None,
+            );
             self.calls.push(cx.spawn(async move |_, _| {
                 _ = call.await;
             }));

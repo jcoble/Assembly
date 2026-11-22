@@ -21,7 +21,9 @@ internal static class ReleaseCliUpdate
     {
         try { await UpdateAsync(shell, target, cli, agentsFile, ct); }
         catch (CallFailed failed) when (!failed.Message.Contains(cli.Family, StringComparison.Ordinal))
-        { throw new CallFailed($"{cli.Family}: {failed.Message}", failed.Reason); }
+        { throw new CallFailed($"{cli.Family}: {failed.Message}", failed.Reason, failed.Tool ?? $"cli:{cli.Family}"); }
+        catch (CallFailed failed) when (failed.Tool is null)
+        { throw new CallFailed(failed.Message, failed.Reason, $"cli:{cli.Family}"); }
     }
 
     private static async Task UpdateAsync(RemoteReleaseShell shell, string target, CliBehind cli, string agentsFile, CancellationToken ct)
@@ -31,7 +33,7 @@ internal static class ReleaseCliUpdate
         var said = await shell.RunAsync(target, Command(cli, agentsFile), null, ct);
         var version = CliCommand.ReadVersion(cli.Family, said.Split('\n')[^1].Trim());
         if (version is null || CliVersion.Compare(version, cli.Version) == "update_available")
-            throw new CallFailed($"{cli.Family} still says {version ?? "something else"} after updating to {cli.Version}.", "version_readback_mismatch");
+            throw new CallFailed($"{cli.Family} still says {version ?? "something else"} after updating to {cli.Version}.", "version_readback_mismatch", $"cli:{cli.Family}");
     }
 
     internal static string Command(CliBehind cli, string agentsFile)
@@ -105,7 +107,7 @@ internal sealed class LocalReleaseTools(RemoteReleaseFeed feed, RemoteReleaseShe
                 var verified = await feed.AdaptersForAsync(Target(), ct);
                 await shell.RunAsync("", $"set -eu; {RequireTools}; ASSEMBLY_ADAPTER_TAG={Quote(verified.Tag)} ASSEMBLY_ADAPTER_MANIFEST_SHA256={Quote(verified.ManifestSha256)} bash {Quote(script)} {Quote(adapters)} {Quote(agentsFile)}", null, ct);
             }
-            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason); }
+            catch (CallFailed failed) { throw new CallFailed($"Adapters: {failed.Message}", failed.Reason, "adapter"); }
             updateProgress?.Piece(UpdateProgress.ThisMachine);
         }
         if (tools.Clis.Count == 0) return;

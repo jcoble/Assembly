@@ -6,6 +6,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Agents;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Desktop.Settings;
 
@@ -21,7 +22,8 @@ internal sealed class SettingsStateComposer(
     TimeProvider time,
     ProviderFailureDetails? failureDetails = null,
     Func<bool>? isReconciling = null,
-    Func<string, bool>? probeDidNotRun = null)
+    Func<string, bool>? probeDidNotRun = null,
+    Func<string?, MachineUpdateFailure?>? updateFailureOf = null)
 {
     private const string LocalKey = "local";
 
@@ -251,18 +253,27 @@ internal sealed class SettingsStateComposer(
                 ? failureDetails?.Get($"{spec.Id}/{providerRow.AccountContext}")
                 : null);
 
-        // A failed install or update of this provider's adapter or CLI is the provider's own
-        // failure (its note is already a fixed safe sentence), not just a machine warning. It
-        // stands in for a plain not-installed result, which is usually the same event seen twice.
+        // A failed install or update is this provider's own failure only when the recorded
+        // failure names its tool: the adapter bundle, its adapter package, or its CLI family.
+        // Anything else (a backend install, the desktop, an unknown tool) stays a machine
+        // warning and is never blamed on a provider that merely also has something behind.
+        var updateFailure = updateFailureOf?.Invoke(machine.Machine.Name);
+        var toolMatches = updateFailure is not null && (
+            (updateFailure.Kind == "adapter"
+                && (updateFailure.Name is null || updateFailure.Name == spec.AdapterPackage)
+                && adapterUpdate is { State: UpdateItem.Behind })
+            || (updateFailure.Kind == "cli"
+                && updateFailure.Name == spec.VendorFamily
+                && cliUpdate is { State: UpdateItem.Behind }));
         var installFailed = machine.UpdateState == MachineUpdateState.Failed
             && machine.Machine.UpdateNote is not null
-            && (adapterUpdate is { State: UpdateItem.Behind } || cliUpdate is { State: UpdateItem.Behind });
+            && toolMatches;
         if (installFailed
             && (lastFailure is null
                 || adapterMissingFromUpdates
                 || providerRow?.Installation == "not_installed"
                 || providerRow?.Reason == "not_installed"))
-            lastFailure = SettingsStateRules.InstallFailure(machine.Machine.UpdateNote);
+            lastFailure = SettingsStateRules.InstallFailure(machine.Machine.UpdateNote, updateFailure!, machine.Key);
 
         // Local evidence must be from a check in this run; a remote's facts count once its mirror is live.
         var checkedThisRun = isLocal
