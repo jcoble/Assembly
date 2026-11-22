@@ -53,16 +53,14 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 
     public void Register(ICallRegistry calls)
     {
-        calls.Topic(Topic, SessionsJson.Default.MachineItem, item => item.Name ?? "local", (key, _) =>
+        calls.Topic(Topic, SessionsJson.Default.MachineItem, item => item.Name ?? "local", (key, call) =>
         {
             if (key is not null)
                 throw new CallFailed("machines has no keys");
             // The first tick after a subscribe probes.
             Interlocked.Exchange(ref _ticks, Every - 1);
             _startClock();
-            return _store is null ? _status.Items : [_status.Items[0], .. _store.All(CancellationToken.None).Select(profile =>
-                (_status.Items.FirstOrDefault(item => item.Name == profile.Name) ?? MachineStore.Item(profile)) with
-                { Ssh = profile.Ssh, Port = profile.Port, TokenFile = profile.TokenFile })];
+            return Snapshot(call.Cancellation);
         });
         if (_store is not null)
         {
@@ -104,6 +102,11 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             return _status.Items.First(item => item.Name == machine.Name);
         });
     }
+
+    internal IReadOnlyList<MachineItem> Snapshot(CancellationToken cancel) =>
+        _store is null ? _status.Items : [_status.Items[0], .. _store.All(cancel).Select(profile =>
+            (_status.Items.FirstOrDefault(item => item.Name == profile.Name) ?? MachineStore.Item(profile)) with
+            { Ssh = profile.Ssh, Port = profile.Port, TokenFile = profile.TokenFile })];
 
     internal async Task ConnectAsync(IMachine machine, CancellationToken cancel)
     {

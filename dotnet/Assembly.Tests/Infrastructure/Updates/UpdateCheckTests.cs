@@ -9,7 +9,7 @@ using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Tests.Infrastructure.Updates;
 
-public sealed class UpdateCheckTests
+public sealed partial class UpdateCheckTests
 {
     private static readonly RemoteBackend Same = new("a", "a", false, "1.0.0", "1.0.0");
     private static UpdateWanted Dev(string? adapter = "2.0.0", string? cli = "3.0.0") => new(null, "1.0.0",
@@ -165,6 +165,7 @@ public sealed class UpdateCheckTests
         Assert.Contains(status.Items[0].Updates!, item => item.Kind == "desktop");
     }
 
+
     [Fact]
     public async Task A_failed_update_says_why_and_a_new_one_can_start()
     {
@@ -174,7 +175,9 @@ public sealed class UpdateCheckTests
         Behind(status, "box");
         Assert.True(updates.Start());
         await Until(() => status.Items[1].UpdateNote is not null && !status.Items[1].Updating);
-        Assert.Equal("Update failed: compile error", status.Items[1].UpdateNote);
+        var note = status.Items[1].UpdateNote;
+        Assert.False(string.IsNullOrWhiteSpace(note));
+        Assert.DoesNotContain("compile error", note!, StringComparison.Ordinal);
         await Until(() => status.Items[1].Updates is { } items && items.All(item => item.Kind != "backend" || item.Current is null));
         Behind(status, "box");
         Assert.True(updates.Start());
@@ -326,9 +329,13 @@ public sealed class UpdateCheckTests
             var notes = new List<string>();
             var source = UpdateSources.ForHost(new HttpClient(), TimeProvider.System, checkout: root, home: root);
             var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new(null, [Item("adapter", "codex-acp")])], false, notes.Add, CancellationToken.None));
-            Assert.Equal(["Waiting."], notes);
+            var note = Assert.Single(notes);
+            Assert.False(string.IsNullOrWhiteSpace(note));
+            Assert.DoesNotContain("Workbox Test sync: nope", note, StringComparison.Ordinal);
             Assert.Equal($"--this-machine --home {root}", File.ReadAllText(Path.Combine(root, "scripts/args")));
-            Assert.Equal("Workbox Test sync: nope", failed.Message);
+            Assert.False(string.IsNullOrWhiteSpace(failed.Message));
+            Assert.Equal("update_failed", failed.Reason);
+            Assert.DoesNotContain("Workbox Test sync: nope", failed.Message, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -481,7 +488,9 @@ public sealed class UpdateCheckTests
         welcome.Status.Welcomed = null;
         welcome.Say();
         await updates.CheckAsync("box", default);
-        await Until(() => welcome.Status.Items[1].UpdateNote == "Update failed: no release" && !welcome.Status.Items[1].Updating);
+        await Until(() => welcome.Status.Items[1].UpdateNote is not null && !welcome.Status.Items[1].Updating);
+        Assert.False(string.IsNullOrWhiteSpace(welcome.Status.Items[1].UpdateNote));
+        Assert.DoesNotContain("no release", welcome.Status.Items[1].UpdateNote!, StringComparison.Ordinal);
         // The failed update's own recheck and every later hello come back behind, and start nothing more.
         await updates.CheckAsync("box", default);
         await updates.CheckAsync("box", default);
@@ -539,7 +548,9 @@ public sealed class UpdateCheckTests
         Assert.False(updates.Start());
         finish.SetResult();
         await Until(() => !status.Items[1].Updating);
-        Assert.Equal("Install failed: Port 9797 on box is in use by x.", status.Items[1].UpdateNote);
+        var note = status.Items[1].UpdateNote;
+        Assert.False(string.IsNullOrWhiteSpace(note));
+        Assert.DoesNotContain("Port 9797", note!, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -20,6 +20,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     private const string ThisApp = "";
     private readonly HashSet<string> _updating = [];
     private readonly HashSet<string> _started = [];
+    private readonly Dictionary<string, MachineUpdateFailure> _failures = [];
     private TaskCompletionSource _freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _restarting;
 
@@ -37,12 +38,41 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     }
     private bool Updating(string? machine) { lock (_updating) return _updating.Contains(Slot(machine)); }
 
+    /// <summary>The last update failure on a machine (null is this one), with the tool it failed on when known.</summary>
+    internal MachineUpdateFailure? FailureOf(string? machine)
+    {
+        lock (_failures) return _failures.GetValueOrDefault(Slot(machine));
+    }
+
+    private void RecordFailure(string? machine, string operation, CallFailed error, string? defaultKind = null)
+    {
+        var (kind, name) = error.Tool is { } tool
+            ? tool.Split(':', 2) is [var head, var rest] ? (head, (string?)rest) : (tool, (string?)null)
+            : (defaultKind, (string?)null);
+        lock (_failures) _failures[Slot(machine)] = new(operation, kind, name);
+    }
+
+    private void RecordFailure(string? machine, string operation)
+    {
+        lock (_failures) _failures[Slot(machine)] = new(operation, null, null);
+    }
+
+    private void ClearFailure(string? machine)
+    {
+        lock (_failures) _failures.Remove(Slot(machine));
+    }
+
     public void Register(ICallRegistry calls)
     {
         calls.Read("updates", "start", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
         {
             if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
             return Task.FromResult(new UpdateStarted(Start()));
+        });
+        calls.Read("updates", "startMachine", UpdatesJson.Default.InstallArgs, UpdatesJson.Default.UpdateStarted, (args, call) =>
+        {
+            if (call.Peer is not OwnerPeer) throw new CallFailed("Owner access is required.", "forbidden");
+            return Task.FromResult(new UpdateStarted(StartMachine(args.Machine)));
         });
         calls.Read("updates", "cancel", UpdatesJson.Default.InstalledArgs, UpdatesJson.Default.UpdateStarted, (_, call) =>
         {
@@ -87,6 +117,9 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     /// <summary>Calls off everything downloading in the run. False once an install has started, or with nothing to call off.</summary>
     internal bool Cancel() => _progress.Cancel();
 
+    /// <summary>When set, replaces the local check trigger on app start and after an update so one reconciler owns this machine.</summary>
+    internal Action? OnLocalReconcile { get; set; }
+
     /// <summary>The first check, and every remote's check from here on.</summary>
     internal void Begin()
     {
@@ -98,7 +131,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             using var watcher = new DevRemoteSyncStatus(path, status, Updated);
             await Task.Delay(Timeout.Infinite, stop).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         });
-        Check(null);
+        if (OnLocalReconcile is { } reconcile) reconcile();
+        else Check(null);
         foreach (var item in status.Items.Where(item => item.Name is not null && item.Backend is not null)) Check(item.Name);
     }
 
@@ -109,20 +143,91 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         await CheckAsync(machine, stop, answered: answered);
     });
 
+    internal async Task<IReadOnlyList<UpdateItem>> CheckLocalAsync(CancellationToken stop, bool fresh = false)
+    {
+        var wanted = await source.WantedAsync(stop, fresh);
+        var here = UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted);
+        status.Updates(null, here);
+        if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
+        return here;
+    }
+
+    internal void ClearLocalFailureIfIdle()
+    {
+        if (!Updating(null)) { ClearFailure(null); status.Updating(null, false, null); }
+    }
+
+    /// <summary>
+    /// Installs or updates local adapters/CLIs under the single local update slot, reloading agents on success.
+    /// The work was selected before the wait for the slot, so it is re-checked once the slot is held:
+    /// whatever the run ahead already did is not installed a second time. An explicit <paramref name="repair"/>
+    /// (a missing descriptor or entry point) is the exception: a bundle reading current through the
+    /// providers that remain cannot prove the missing one back, so the repair item still runs.
+    /// </summary>
+    internal async Task<bool> UpdateLocalToolsAsync(IReadOnlyList<UpdateItem> behind, bool adaptersNewer, bool repair, CancellationToken stop)
+    {
+        await TakeWhenFreeAsync(ThisApp, () => { }, stop);
+        string? ending = null;
+        var cancelled = false;
+        ClearFailure(null);
+        status.Updating(null, true, null);
+        var run = _progress.Begin(null, UpdateProgress.ThisMachine, behind.Count, downloads: false);
+        try
+        {
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(stop, run);
+            var current = await CheckLocalAsync(either.Token, fresh: false);
+            IReadOnlyList<UpdateItem> stillBehind =
+            [
+                .. behind
+                    .Select(item => current.FirstOrDefault(candidate =>
+                        candidate.Kind == item.Kind && candidate.Name == item.Name && candidate.State == UpdateItem.Behind))
+                    .OfType<UpdateItem>()
+            ];
+            if (repair
+                && behind.FirstOrDefault(item => item.Kind == "adapter" && item.Wanted is null) is { } repairItem
+                && !stillBehind.Any(item => item.Kind == repairItem.Kind && item.Name == repairItem.Name))
+                stillBehind = [.. stillBehind, repairItem];
+            if (stillBehind.Count > 0)
+            {
+                var currentAdaptersNewer = current.Any(item => item.Kind == "adapter" && item.State == UpdateItem.Newer);
+                await source.UpdateAsync([new(null, stillBehind, currentAdaptersNewer)], automatic: false, note => status.Updating(null, true, note), either.Token);
+            }
+            run.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (run.IsCancellationRequested && !stop.IsCancellationRequested)
+        {
+            cancelled = true;
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            cancelled = true;
+            throw;
+        }
+        catch (CallFailed error) { RecordFailure(null, "update", error); ending = "Update failed: " + SafeFailure(error); }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(null, "update"); ending = "Update failed: " + UpdateDidNotFinish; }
+        finally
+        {
+            _progress.End(UpdateProgress.ThisMachine);
+            Free(null);
+            status.Updating(null, false, ending);
+        }
+        if (cancelled || ending is not null) return false;
+        reload?.Invoke();
+        return true;
+    }
+
     /// <param name="machine">Null is this app.</param>
     /// <param name="stop">Stops the reads.</param>
     /// <param name="fresh">Someone asked, so nothing kept answers for the release.</param>
     /// <param name="answered">It just said hello, which comes before its status says it's reachable.</param>
     internal async Task CheckAsync(string? machine, CancellationToken stop, bool fresh = false, bool answered = false)
     {
-        var wanted = await source.WantedAsync(stop, fresh);
         if (machine is null)
         {
-            var here = UpdateCheck.Local(BackendBuild.Version, await TryRead(async () => await local.ReadAsync(stop)), wanted);
-            status.Updates(null, here);
-            if (here.Any(item => item.Kind == "desktop" && item.State == UpdateItem.Behind && item.Wanted is not null && source.StartsAppUpdate(item.Wanted))) StartBy(ThisApp);
+            await CheckLocalAsync(stop, fresh);
             return;
         }
+        var wanted = await source.WantedAsync(stop, fresh);
         var saved = status.Items.FirstOrDefault(item => item.Name == machine);
         // What an unreachable machine last said is old news: a decision from it could install over a newer backend.
         var reachable = answered || saved?.Reachable == true;
@@ -168,11 +273,12 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             string? ending = null;
             try
             {
+                ClearFailure(machine);
                 status.Updating(machine, true, null);
                 await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
             }
-            catch (CallFailed error) { ending = "Install failed: " + error.Message; }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
+            catch (CallFailed error) { RecordFailure(machine, "install", error, "backend"); ending = "Install failed: " + SafeFailure(error); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(machine, "install"); ending = "Install failed: " + UpdateDidNotFinish; }
             finally
             {
                 Free(machine);
@@ -206,8 +312,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                 taken = true;
                 await source.RestartAppAsync(note => status.Restarting(true, note), stop);
             }
-            catch (CallFailed error) { ending = "Couldn't restart: " + error.Message; }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Couldn't restart: " + error.Message; }
+            catch (CallFailed error) { ending = "Couldn't restart: " + SafeFailure(error); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Couldn't restart into the update."; }
             finally
             {
                 if (taken) Free(null);
@@ -247,6 +353,17 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         return started;
     }
 
+    /// <summary>Everything behind on one machine only (null is this one): a row's Try again retries its own machine.</summary>
+    internal bool StartMachine(string? machine)
+    {
+        var item = status.Items.FirstOrDefault(candidate => candidate.Name == machine);
+        if (item is null && machine is not null) throw new CallFailed("Unknown remote machine.", "unknown_machine");
+        return item is not null
+            && (item.Name is null || item.Reachable)
+            && (item.Updates ?? []).Any(update => update.State == UpdateItem.Behind)
+            && Begin(item, automatic: false);
+    }
+
     private bool Begin(MachineItem item, bool automatic)
     {
         if (!Take(item.Name)) return false;
@@ -263,6 +380,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         var downloaded = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind && update.Kind is "desktop" or "backend");
         var pieces = (item.Updates ?? []).Count(update => update.State == UpdateItem.Behind) - downloaded;
         var readyBefore = source.AppReady;
+        ClearFailure(machine);
         status.Updating(machine, true, null);
         var run = _progress.Begin(machine, place, pieces, downloaded > 0);
         try
@@ -282,8 +400,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             // What this run got ready goes with it, so there's no Restart to Update for an update someone called off.
             if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
-        catch (CallFailed error) { ending = "Update failed: " + error.Message; }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+        catch (CallFailed error) { RecordFailure(machine, "update", error); ending = "Update failed: " + SafeFailure(error); }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { RecordFailure(machine, "update"); ending = "Update failed: " + UpdateDidNotFinish; }
         finally
         {
             _progress.End(place);
@@ -296,10 +414,42 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         else Check(machine);
     }
 
+    // Raw provider or installer output must never leave the backend in a pushed updateNote: the note is
+    // always one of these fixed plain sentences, chosen by the failure's reason alone, never its message.
+    internal const string UpdateDidNotFinish = "The update didn't finish.";
+
+    internal static string SafeFailure(CallFailed error) => error.Reason switch
+    {
+        "ssh_unavailable" => "Could not reach the remote machine over SSH.",
+        "remote_busy" => "A session is running on the machine; try again when it finishes.",
+        "remote_command_failed" => "The update command failed.",
+        "no_release" => "No signed release is published yet.",
+        "no_update" => "No update is ready.",
+        "version_readback_mismatch" => "The tool still reports the old version after updating.",
+        "bad_args" => "That update is not supported.",
+        _ => UpdateDidNotFinish
+    };
+
     /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>
     private void Updated()
     {
         reload?.Invoke();
-        foreach (var machine in status.Items.Select(item => item.Name)) Check(machine);
+        foreach (var machine in status.Items.Select(item => item.Name))
+        {
+            if (machine is null && OnLocalReconcile is { } reconcile) reconcile();
+            else Check(machine);
+        }
     }
+}
+
+/// <summary>
+/// What the last failed update on a machine was: the operation (<c>update</c> or <c>install</c>)
+/// and the tool it failed on by kind and name (<c>adapter</c> with no name is the whole bundle),
+/// when that is known exactly. Held in memory beside the machine's update note, which has the
+/// same lifetime; nothing new is persisted.
+/// </summary>
+internal sealed record MachineUpdateFailure(string Operation, string? Kind, string? Name)
+{
+    /// <summary>The tool as one word for the panel: kind, or kind and name together.</summary>
+    internal string? Tool => Kind is null ? null : Name is null ? Kind : $"{Kind}:{Name}";
 }

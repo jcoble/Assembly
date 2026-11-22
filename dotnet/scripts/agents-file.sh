@@ -243,7 +243,7 @@ fi
 ASSEMBLY_NODE=$(command -v node) ASSEMBLY_CLAUDE=$(command -v claude || true) ASSEMBLY_CODEX=$(command -v codex || true) \
   ASSEMBLY_ADAPTERS=$bundle ASSEMBLY_USER_MCP=${ASSEMBLY_USER_MCP:-off} \
   ASSEMBLY_CLAUDEAI_MCP=${ASSEMBLY_CLAUDEAI_MCP:-off} python3 -I - "$out" "$bundle_root" "$bundle" "${stage:-}" "${final_bundle:-}" <<'PY'
-import fcntl, hashlib, json, os, shutil, sys, tempfile, tomllib
+import fcntl, hashlib, json, os, re, shutil, sys, tempfile, tomllib
 out, root, bundle, stage, final_bundle = sys.argv[1:]
 root = os.path.realpath(root)
 lock = os.open(out + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
@@ -304,7 +304,11 @@ try:
         for agent in generated:
             cli = os.environ[f"ASSEMBLY_{agent['id'].upper()}"]
             if not cli: raise ValueError("managed provider CLI is unavailable")
-            agent["cli"] = cli
+            # A CLI path the owner saved (Advanced) is theirs: only no path, or one this installer
+            # manages (<adapters>/clis/<key>/node_modules/.bin/<id>), is replaced with the managed copy.
+            prior_cli = prior.get(agent["id"], {}).get("cli")
+            if not isinstance(prior_cli, str) or prior_cli == "" or re.search(r"/clis/[^/]+/node_modules/\.bin/" + re.escape(agent["id"]) + r"$", prior_cli):
+                agent["cli"] = cli
     generated_by_id = {a["id"]: a for a in generated}
     agents = [generated_by_id.get(a["id"], a) for a in current]
     agents.extend(a for a in generated if a["id"] not in prior)

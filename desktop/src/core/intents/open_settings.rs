@@ -1,4 +1,4 @@
-//! `OpenSettings`: open the Settings page, from the Home button's menu, the palette or Cmd-,.
+//! `OpenSettings`: open the Settings page, from the Home button's slide-out, the palette or Cmd-,.
 
 use gpui_kit::actions;
 

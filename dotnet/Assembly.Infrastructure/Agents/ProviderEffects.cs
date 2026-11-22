@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Agents;
 
 /// <summary>Probes one exact configured target for its original persisted claim; the Engine owns facts and merging.</summary>
 public sealed class ProviderEffects(IAppDatabase db, AgentCatalogue catalogue, IAgentLauncher launcher,
-    EngineRuntime runtime, TimeProvider time) : IEngineEffects
+    EngineRuntime runtime, TimeProvider time, ProviderFailureDetails? failureDetails = null) : IEngineEffects
 {
     private readonly EngineAuthSink _sink = new(runtime, time);
     private readonly CancellationToken _stopping = runtime.Stopping;
@@ -48,6 +48,8 @@ public sealed class ProviderEffects(IAppDatabase db, AgentCatalogue catalogue, I
             facts is null ? "unknown" : InstallationOf(facts.Installation),
             facts is null ? "could_not_check" : AuthOf(facts.Auth),
             facts is null ? "adapter_error" : ReasonOf(facts.Problem), runtime.Stopping);
+        if (recorded.Applied)
+            failureDetails?.Set(capture.Binding.TargetId, facts?.ProblemDetail);
         return recorded.Applied
             ? new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(
                 new ProviderEffectData(capture.Binding.TargetId, capture.Binding.ProviderVersion), EngineJson.Default.ProviderEffectData), null)

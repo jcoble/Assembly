@@ -12,6 +12,14 @@ namespace Assembly.Infrastructure.Updates;
 internal sealed record CliInstalled(string Version, string Manager, string Source, IReadOnlyList<CliFile> Files);
 internal sealed record CliFile(string Path, string Resolved, string Hash);
 
+internal enum CliUpdateMethod
+{
+    /// <summary>Updated by the CLI's own <c>update</c> command.</summary>
+    SelfUpdate,
+    /// <summary>Updated the way it was installed: npm global if installed via npm, Homebrew if installed via brew, otherwise its own <c>update</c> command.</summary>
+    InstalledMethod
+}
+
 /// <summary>Only fixed CLI version and installed npm-root reads; never launches an adapter or an update.</summary>
 internal sealed class CliCommand(TimeProvider time)
 {
@@ -19,14 +27,35 @@ internal sealed class CliCommand(TimeProvider time)
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly IReadOnlyDictionary<string, KnownCli> Known = new Dictionary<string, KnownCli>(StringComparer.Ordinal)
     {
-        ["codex"] = new("codex", "@openai/codex", "codex-cli ", "", UpdatesItself: false),
-        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)", UpdatesItself: true)
+        ["codex"] = new("codex", "@openai/codex", "codex-cli ", "", CliUpdateMethod.InstalledMethod, "curl -fsSL https://chatgpt.com/codex/install.sh | sh", HomebrewName: "codex"),
+        ["claude"] = new("claude", "@anthropic-ai/claude-code", "", " (Claude Code)", CliUpdateMethod.SelfUpdate, "curl -fsSL https://claude.ai/install.sh | bash")
     };
 
     internal static bool Supports(string? family) => family is not null && Known.ContainsKey(family);
+    internal static string ExecutableName(string family) => Known[family].Name;
     internal static string PackageOf(string family) => Known[family].Package;
-    /// <summary>True for a CLI with its own <c>update</c> command; the others go through npm, which installed them.</summary>
-    internal static bool UpdatesItself(string family) => Known[family].UpdatesItself;
+    internal static CliUpdateMethod UpdateMethodOf(string family) => Known[family].UpdateMethod;
+    internal static string? HomebrewNameOf(string family) => Known[family].HomebrewName;
+    /// <summary>The vendor's official installer, the fallback when the CLI's own update fails.</summary>
+    internal static string OfficialInstallerOf(string family) => Known[family].Installer;
+    /// <summary>True for a CLI with its own <c>update</c> command; the others update the way they were installed.</summary>
+    internal static bool UpdatesItself(string family) => Known[family].UpdateMethod == CliUpdateMethod.SelfUpdate;
+
+    /// <summary>Checks whether a known provider CLI binary exists on the machine's PATH or standard user bin directories.</summary>
+    internal static bool IsInstalledOnLocalPath(string family)
+    {
+        if (!Known.TryGetValue(family, out var cli)) return false;
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var folders = new List<string>();
+        if (!string.IsNullOrEmpty(home)) folders.Add(Path.Combine(home, ".local", "bin"));
+        folders.Add("/opt/homebrew/bin");
+        folders.Add("/usr/local/bin");
+        var envPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var folder in envPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            folders.Add(folder);
+        var search = string.Join(Path.PathSeparator, folders.Distinct(StringComparer.Ordinal));
+        return Resolve(cli.Name, cli.Name, new Dictionary<string, string>(StringComparer.Ordinal) { ["PATH"] = search }) is not null;
+    }
 
     /// <summary>The version in what <c>--version</c> printed, or null when it isn't this CLI's stable answer.</summary>
     internal static string? ReadVersion(string family, string output)
@@ -190,5 +219,5 @@ internal sealed class CliCommand(TimeProvider time)
     }
 
     private static CallFailed Failure(string reason) => new("CLI check unavailable.", reason);
-    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix, bool UpdatesItself);
+    private sealed record KnownCli(string Name, string Package, string Prefix, string Suffix, CliUpdateMethod UpdateMethod, string Installer, string? HomebrewName = null);
 }

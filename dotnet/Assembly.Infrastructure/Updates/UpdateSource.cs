@@ -46,6 +46,9 @@ internal sealed record MachineBehind(string? Name, IReadOnlyList<UpdateItem> Beh
 
 internal sealed record CliBehind(string Family, string Version);
 
+/// <summary>One failed piece of an update: its text, and the tool it failed on when that is known exactly.</summary>
+internal sealed record UpdateFailureNote(string Text, string? Tool = null);
+
 /// <summary>The adapters and CLIs behind on one machine.</summary>
 internal sealed record ToolsBehind(bool Adapters, IReadOnlyList<CliBehind> Clis)
 {
@@ -72,7 +75,11 @@ internal static class UpdateSources
     /// Each remote's share of the one update, the same from a checkout or a release. One that can't be reached doesn't hold
     /// up the rest; the failures come back together.
     /// </summary>
-    internal static async Task RemotesAsync(IReleaseInstall release, IEnumerable<MachineBehind> machines, Action<string> progress, List<string> failures, CancellationToken ct)
+    /// <summary>The one tool a whole update failed on, when exactly one piece failed and named it.</summary>
+    internal static string? OnlyTool(IReadOnlyList<UpdateFailureNote> failures) =>
+        failures is [{ Tool: { } tool }] ? tool : null;
+
+    internal static async Task RemotesAsync(IReleaseInstall release, IEnumerable<MachineBehind> machines, Action<string> progress, List<UpdateFailureNote> failures, CancellationToken ct)
     {
         foreach (var machine in machines)
         {
@@ -80,7 +87,11 @@ internal static class UpdateSources
             async Task Try(string? item, Func<Task> step)
             {
                 try { await step(); }
-                catch (CallFailed failed) { failures.Add(item is null ? failed.Message : $"{item}: {failed.Message}"); }
+                catch (CallFailed failed)
+                {
+                    failures.Add(new(item is null ? failed.Message : $"{item}: {failed.Message}",
+                        item is null ? failed.Tool : failed.Tool ?? "backend"));
+                }
             }
             var backend = machine.Name is not null && machine.Behind.Any(item => item.Kind == "backend");
             if (backend) await Try("Backend", () => release.InstallAsync(machine.Name!, Note, ct, machine.AdaptersNewer));
@@ -128,7 +139,7 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
 
     public async Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
     {
-        var failures = new List<string>();
+        var failures = new List<UpdateFailureNote>();
         var here = machines.FirstOrDefault(machine => machine.Name is null);
         if (home is not null && here is not null && ToolsBehind.Of(here.Behind).Any)
             await Script(["--this-machine", "--home", home], progress, failures, ct);
@@ -137,21 +148,22 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         var others = machines.Where(machine => machine.Name is not null && !Lane(machine.Name) && machine.Behind.Count > 0).ToArray();
         if (others.Length > 0)
             await UpdateSources.RemotesAsync(release ?? throw new CallFailed("This app can't update a remote machine.", "no_release"), others, progress, failures, ct);
-        if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures), "update_failed");
+        if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures.Select(failure => failure.Text)), "update_failed", UpdateSources.OnlyTool(failures));
     }
 
-    private async Task Script(string[] arguments, Action<string> progress, List<string> failures, CancellationToken ct)
+    private async Task Script(string[] arguments, Action<string> progress, List<UpdateFailureNote> failures, CancellationToken ct)
     {
         var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/update-machines.ts"), .. arguments])
         { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         using var process = new Process { StartInfo = start };
-        string? last = null;
         void Line(string? line)
         {
             if (string.IsNullOrWhiteSpace(line) || line.StartsWith("[dev-sync timing]", StringComparison.Ordinal)) return;
-            if (!line.StartsWith(Marker, StringComparison.Ordinal)) { last = line; return; }
+            // Raw script output is never kept: only its marked progress lines leave this method,
+            // and those only as fixed sentences, since progress becomes the pushed update note.
+            if (!line.StartsWith(Marker, StringComparison.Ordinal)) return;
             using var json = JsonDocument.Parse(line[Marker.Length..]);
-            if (json.RootElement.GetProperty("reason").GetString() is { } reason) progress(reason);
+            if (json.RootElement.GetProperty("reason").GetString() is { } reason) progress(SafeProgress(reason));
         }
         process.OutputDataReceived += (_, line) => Line(line.Data);
         process.ErrorDataReceived += (_, line) => Line(line.Data);
@@ -162,7 +174,23 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         await using var stop = ct.Register(() => { try { if (!process.HasExited) _ = Kill(process.Id, 15); } catch (InvalidOperationException) { } });
         await process.WaitForExitAsync(CancellationToken.None);
         ct.ThrowIfCancellationRequested();
-        if (process.ExitCode != 0) failures.Add(last ?? $"The update exited {process.ExitCode}.");
+        if (process.ExitCode != 0) failures.Add(new("The update didn't finish."));
+    }
+
+    // The same fixed sentences app-dev-remote.ts publishes, chosen by the marked reason's kind.
+    private static string SafeProgress(string reason)
+    {
+        if (reason.StartsWith("Remote backend update is waiting", StringComparison.Ordinal))
+            return "Remote backend update is waiting: a session is running there. It finishes when the host goes idle.";
+        if (reason.StartsWith("Remote backend failed to start", StringComparison.Ordinal))
+            return "Remote backend failed to start.";
+        if (reason.StartsWith("Remote backend started, but checking it failed", StringComparison.Ordinal))
+            return "Remote backend started, but checking it failed.";
+        if (reason.StartsWith("Remote backend build or deploy failed", StringComparison.Ordinal))
+            return "Remote backend build or deploy failed.";
+        return reason is "Updating this machine's adapters and CLIs." or "Checking the remote."
+            ? reason
+            : "The remote update is running.";
     }
 
     private const string Marker = "ASSEMBLY_REMOTE_SYNC ";
@@ -223,16 +251,16 @@ internal sealed class ReleaseUpdateSource(CliReleaseSource npm, IReleaseInstall?
     public async Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct)
     {
         if (release is null) throw new CallFailed("No signed release is published yet, so there's nothing to update from.", "no_release");
-        var failures = new List<string>();
+        var failures = new List<UpdateFailureNote>();
         // A new app waits for its restart, and what's behind on the rest needn't. By itself, only the app and remotes go.
         var behind = machines.FirstOrDefault(machine => machine.Name is null)?.Behind.FirstOrDefault(item => item.Kind == "desktop");
         if (behind?.Wanted is { } wanted && app is not null && app.Ready != wanted)
         {
             try { await app.StageAsync(wanted, progress, ct); }
-            catch (CallFailed failed) { failures.Add(failed.Message); }
+            catch (CallFailed failed) { failures.Add(new(failed.Message, "desktop")); }
         }
         await UpdateSources.RemotesAsync(release, automatic ? machines.Where(machine => machine.Name is not null) : machines, progress, failures, ct);
-        if (behind is not null && app is null && !automatic) failures.Add($"Assembly {behind.Wanted} is out, and this app can't install it from here: install it from the release page.");
-        if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures), "update_failed");
+        if (behind is not null && app is null && !automatic) failures.Add(new($"Assembly {behind.Wanted} is out, and this app can't install it from here: install it from the release page.", "desktop"));
+        if (failures.Count > 0) throw new CallFailed(string.Join(" ", failures.Select(failure => failure.Text)), "update_failed", UpdateSources.OnlyTool(failures));
     }
 }

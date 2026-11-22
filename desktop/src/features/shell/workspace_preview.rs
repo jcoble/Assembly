@@ -1,3 +1,5 @@
+//! The sample screens (projects, settings and the component gallery) in one center pane, opened from the palette.
+//! Its project dialogs are kept as the reference for the real ones.
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::preview_screen::Preview;
 use gpui_kit::component::dock::{
@@ -6,6 +8,9 @@ use gpui_kit::component::dock::{
 use gpui_kit::*;
 
 const PANEL: &str = "Projects and Settings preview";
+
+actions!(shell, [OpenSamplePreview]);
+
 struct OpenPreview(WeakEntity<PreviewPanel>);
 impl Global for OpenPreview {}
 
@@ -26,7 +31,19 @@ impl PreviewPanel {
     }
 }
 
+/// Registers the pane, and lists the sample screens in the palette now that the Home button has no menu for them.
 pub fn register(cx: &mut App) {
+    cx.on_action(|_: &OpenSamplePreview, cx| {
+        // The palette runs this while its window is being updated, so the window is updated once that's done.
+        if let Some(window) = cx.active_window() {
+            cx.defer(move |cx| _ = window.update(cx, |_, window, cx| open(true, window, cx)));
+        }
+    });
+    crate::core::commands::command_registry::CommandRegistry::add(
+        "Sample screens (projects and settings)",
+        Box::new(OpenSamplePreview),
+        cx,
+    );
     register_panel(cx, PANEL, |_, window, cx| {
         let pane = cx.new(|cx| PreviewPanel::new(window, cx));
         cx.set_global(OpenPreview(pane.downgrade()));

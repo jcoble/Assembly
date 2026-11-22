@@ -1,17 +1,18 @@
 //! `TopBar` owns the window's top row, on the glass, as the rule sheet's "Window chrome and top bar" draws it. On the
-//! left: the window buttons (on macOS the title bar is transparent and its buttons sit inside this row), Home as an
-//! icon button whose menu opens Build Board and Settings, and Board as an outlined pill with its grey count of live
+//! left: the window buttons (on macOS the title bar is transparent and its buttons sit inside this row), Home
+//! (`features/home`), whose press opens the providers and connections panel and whose hover slide-out opens
+//! Projects and Settings, and Board as an outlined pill with its grey count of live
 //! sessions. The left part keeps the sessions column's width, so the tabs start over the chat. In the middle: the
 //! open tabs (top_tabs.rs). On the right: the amber "N need you" pill when something needs the owner, which opens
 //! the Board on what needs you, then the Terminal and drawer toggles. Empty glass in the row moves the window and a
 //! double click zooms it, as a title bar does. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
-use crate::components::glass_button::{GLASS_ICON, glass_button, glass_icon_button};
+use crate::components::glass_button::{GLASS_ICON, glass_button};
+use crate::features::home::home_button::HomeButton;
 use crate::features::remote_install::restart_button::RestartButton;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::dock::{DockArea, DockPlacement};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,7 +20,6 @@ use gpui_kit::*;
 
 use super::{drawer_buttons, terminal_toggle, top_tabs};
 use crate::core::engine::{EngineChanged, EngineFeed};
-use crate::core::intents::open_settings::OpenSettings;
 use crate::core::theme::look::Look;
 use crate::core::theme::metrics::{
     CORNER_PILL, COUNT_HEIGHT, COUNT_MIN_WIDTH, SPACE, TOP_BAR_HEIGHT,
@@ -75,6 +75,8 @@ pub struct TopBar {
     counts: TopBarCounts,
     /// Set by a press on empty glass, so the next pointer move starts moving the window.
     should_move: bool,
+    /// Home, its hover slide-out and the providers and connections panel.
+    home: Entity<HomeButton>,
     restart: Entity<RestartButton>,
     _feed: Subscription,
     /// A notification's click opens the panel on its question.
@@ -103,6 +105,7 @@ impl TopBar {
             })
         });
         Self {
+            home: cx.new(HomeButton::new),
             restart: cx.new(RestartButton::new),
             dock,
             _subscription,
@@ -271,43 +274,6 @@ impl TopBar {
             .on_click(cx.listener(|bar, _, _, cx| bar.show_needs(cx)));
         Some(div().debug_selector(|| "board-badge".into()).child(pill))
     }
-
-    /// Home: a glass icon button whose menu opens Build Board, Projects and the settings.
-    fn home_button(cx: &App) -> impl IntoElement {
-        glass_icon_button("home", IconName::House, false, cx)
-            .control(ids::HOME, "Home")
-            .tooltip("Home")
-            .dropdown_menu(|menu, _, _| {
-                menu.min_w(px(190.))
-                    .item(
-                        PopupMenuItem::new("Build Board")
-                            .icon(IconName::LayoutDashboard)
-                            .on_click(|_, window, cx| {
-                                if let Ok(open) = cx.build_action("board::ToggleBoard", None) {
-                                    window.dispatch_action(open, cx);
-                                }
-                            }),
-                    )
-                    .item(PopupMenuItem::new("Projects").on_click(|_, window, cx| {
-                        crate::features::projects::projects_view::open(window, cx)
-                    }))
-                    .separator()
-                    .item(
-                        PopupMenuItem::new("Settings")
-                            .icon(IconName::Settings)
-                            .on_click(|_, window, cx| {
-                                super::workspace_preview::open(true, window, cx)
-                            }),
-                    )
-                    .item(
-                        PopupMenuItem::new("Connection settings")
-                            .icon(IconName::Settings)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(OpenSettings), cx);
-                            }),
-                    )
-            })
-    }
 }
 
 impl Render for TopBar {
@@ -339,7 +305,7 @@ impl Render for TopBar {
                     .flex_none()
                     .w(LEFT_PADDING + if lights { LIGHTS_WIDTH } else { px(0.) }),
             )
-            .child(Self::home_button(cx))
+            .child(self.home.clone())
             .child(self.board_button(&look, cx))
             .child(self.drag_area("top-bar-left-glass", cx).flex_1());
         let right = h_flex()

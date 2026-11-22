@@ -108,6 +108,60 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.Equal("2.0.0 (Claude Code)", File.ReadAllText(Path.Combine(other, "claude.version")).Trim());
     }
 
+    // The install that owns the configured executable is the one updated: a Homebrew Codex is upgraded
+    // through Homebrew even while an npm global copy exists, and a standalone copy whose own update
+    // fails falls back to the official installer (the fake curl serves it).
+    [Fact]
+    public async Task The_codex_updater_follows_the_configured_executable_and_falls_back_to_the_official_installer()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(Bin);
+        Directory.CreateDirectory(Github);
+        var calls = Path.Combine(_root, "calls.log");
+
+        var npmRoot = Path.Combine(_root, "npm-global");
+        Directory.CreateDirectory(Path.Combine(npmRoot, "@openai/codex"));
+        File.WriteAllText(Path.Combine(npmRoot, "@openai/codex/package.json"), "{\"name\":\"@openai/codex\",\"version\":\"0.9.0\"}");
+        Script("npm", $"#!/bin/sh\ncase \"$1\" in root) echo {npmRoot} ;; *) echo \"npm $*\" >>\"{calls}\" ;; esac\n");
+
+        var brewPrefix = Path.Combine(_root, "brew");
+        var brewBin = Path.Combine(brewPrefix, "Cellar/codex/1.0.0/bin");
+        Directory.CreateDirectory(brewBin);
+        var brewVersion = Path.Combine(brewBin, "codex.version");
+        File.WriteAllText(brewVersion, "1.0.0");
+        var brewCodex = Path.Combine(brewBin, "codex");
+        File.WriteAllText(brewCodex, "#!/bin/sh\ncase \"$1\" in --version) echo \"codex-cli $(cat \"$0.version\")\" ;; esac\n");
+        File.SetUnixFileMode(brewCodex, (UnixFileMode)0b111_101_101);
+        Script("brew", $"#!/bin/sh\ncase \"$1\" in --prefix) echo {brewPrefix} ;; upgrade) echo \"brew $*\" >>\"{calls}\"; echo 2.0.0 >\"{brewVersion}\" ;; esac\n");
+
+        var shell = new LocalShell(Home, Github, Path.Combine(_root, "python"), Bin);
+        var agents = Path.Combine(_root, "agents.json");
+        File.WriteAllText(agents, "[{\"id\":\"codex\",\"vendorFamily\":\"codex\",\"cli\":\"" + brewCodex + "\"}]");
+        await ReleaseCliUpdate.RunAsync(shell, "box", new("codex", "2.0.0"), "'" + agents + "'", default);
+        Assert.Equal("2.0.0", File.ReadAllText(brewVersion).Trim());
+        var logged = File.Exists(calls) ? File.ReadAllText(calls) : "";
+        Assert.Contains("brew upgrade", logged, StringComparison.Ordinal);
+        Assert.DoesNotContain("npm install", logged, StringComparison.Ordinal);
+
+        // A standalone copy (neither npm nor Homebrew) whose own update fails: the official installer runs.
+        File.Delete(calls);
+        var standalone = Path.Combine(_root, "standalone");
+        Directory.CreateDirectory(standalone);
+        var standaloneVersion = Path.Combine(standalone, "codex.version");
+        File.WriteAllText(standaloneVersion, "1.0.0");
+        var standaloneCodex = Path.Combine(standalone, "codex");
+        File.WriteAllText(standaloneCodex, "#!/bin/sh\ncase \"$1\" in --version) echo \"codex-cli $(cat \"$0.version\")\" ;; update) exit 1 ;; esac\n");
+        File.SetUnixFileMode(standaloneCodex, (UnixFileMode)0b111_101_101);
+        Script("curl", $"#!/bin/sh\necho \"curl $*\" >>\"{calls}\"\nprintf '%s\\n' 'echo 2.0.0 >\"{standaloneVersion}\"' \n");
+        File.WriteAllText(agents, "[{\"id\":\"codex\",\"vendorFamily\":\"codex\",\"cli\":\"" + standaloneCodex + "\"}]");
+        await ReleaseCliUpdate.RunAsync(shell, "box", new("codex", "2.0.0"), "'" + agents + "'", default);
+        Assert.Equal("2.0.0", File.ReadAllText(standaloneVersion).Trim());
+        logged = File.Exists(calls) ? File.ReadAllText(calls) : "";
+        Assert.Contains("curl", logged, StringComparison.Ordinal);
+        Assert.DoesNotContain("npm install", logged, StringComparison.Ordinal);
+        Assert.DoesNotContain("brew upgrade", logged, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Only_a_known_cli_and_a_stable_version_reach_a_shell()
     {
@@ -116,12 +170,12 @@ public sealed partial class RemoteReleaseInstallTests
         Assert.Contains("@openai/codex@1.2.3", ReleaseCliUpdate.Command(new("codex", "1.2.3"), "a"), StringComparison.Ordinal);
     }
 
-    private (LocalReleaseTools Tools, string Agents, string Adapters) LocalFixture(RemoteReleaseFeed feed, RemoteReleaseShell shell, Func<bool>? running = null)
+    private (LocalReleaseTools Tools, string Agents, string Adapters) LocalFixture(RemoteReleaseFeed feed, RemoteReleaseShell shell, Func<bool>? running = null, Func<CancellationToken, Task>? idle = null)
     {
         var data = Path.Combine(Home, "mac");
         Directory.CreateDirectory(data);
         var agents = Path.Combine(data, "agents.json");
-        return (new(feed, shell, agents, Path.Combine(data, "adapters"), running ?? (() => false), Path.Combine(Repository(), "dotnet/scripts/agents-file.sh")), agents, Path.Combine(data, "adapters"));
+        return (new(feed, shell, agents, Path.Combine(data, "adapters"), running ?? (() => false), idle ?? (_ => Task.CompletedTask), Path.Combine(Repository(), "dotnet/scripts/agents-file.sh")), agents, Path.Combine(data, "adapters"));
     }
 
     private RemoteReleaseFeed SignedFeed(out LocalShell shell)
@@ -172,13 +226,19 @@ public sealed partial class RemoteReleaseInstallTests
         if (!OperatingSystem.IsLinux()) return;
         var feed = SignedFeed(out var shell);
         FakeCli("claude", "1.0.0", "2.0.0");
-        var (tools, agents, _) = LocalFixture(feed, shell, () => true);
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (tools, agents, _) = LocalFixture(feed, shell, () => !idle.Task.IsCompleted, stop => idle.Task.WaitAsync(stop));
         File.WriteAllText(agents, "[]");
-        var busy = await Assert.ThrowsAsync<CallFailed>(() => tools.UpdateAsync(new(false, [new("claude", "2.0.0")]), _ => { }, default));
-        Assert.Contains("A session is running", busy.Message, StringComparison.Ordinal);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = tools.UpdateAsync(new(false, [new("claude", "2.0.0")]), note =>
+        {
+            if (note == AppUpdate.WaitingWords) waiting.TrySetResult();
+        }, default);
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.False(running.IsCompleted);
         Assert.Equal("1.0.0", File.ReadAllText(Path.Combine(Bin, "claude.version")));
-        var (free, _, _) = LocalFixture(feed, shell);
-        await free.UpdateAsync(new(false, [new("claude", "2.0.0")]), _ => { }, default);
+        idle.SetResult();
+        await running.WaitAsync(TimeSpan.FromSeconds(60));
         Assert.Equal("2.0.0", File.ReadAllText(Path.Combine(Bin, "claude.version")).Trim());
     }
 

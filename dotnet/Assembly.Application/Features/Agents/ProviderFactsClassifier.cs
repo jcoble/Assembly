@@ -28,7 +28,7 @@ public static class ProviderFactsClassifier
             .Select(SignInMethods.Present).ToArray();
         return new(agent.Id, agent.Name, probe.Initialize?.Info?.Name ?? agent.Id, version,
             installation, auth, problem ?? (version is null ? ProviderProblem.version_unknown : null),
-            models, methods, checkedMs);
+            models, methods, checkedMs, probe.ProblemDetail);
     }
 
     private static ProviderProblem? Problem(string? code) => code switch

@@ -91,12 +91,16 @@ public sealed class MachineUpdatesRestartTests
         await Until(() => Here(status).Updating);
         source.Tools.SetException(new IOException("no network"));
         await Until(() => !Here(status).Updating);
-        Assert.Equal("Update failed: no network", Here(status).UpdateNote);
+        var updateNote = Here(status).UpdateNote;
+        Assert.False(string.IsNullOrWhiteSpace(updateNote));
+        Assert.DoesNotContain("no network", updateNote!, StringComparison.Ordinal);
         Assert.Null(Here(status).RestartNote);
 
         Assert.True(updates.RestartApp());
-        await Until(() => Here(status).RestartNote == "Couldn't restart: the disk is full" && !Here(status).Restarting);
-        Assert.Equal("Update failed: no network", Here(status).UpdateNote);
+        await Until(() => Here(status).RestartNote is not null && !Here(status).Restarting);
+        Assert.False(string.IsNullOrWhiteSpace(Here(status).RestartNote));
+        Assert.DoesNotContain("the disk is full", Here(status).RestartNote!, StringComparison.Ordinal);
+        Assert.Equal(updateNote, Here(status).UpdateNote);
 
         // The press is over, so it can be pressed again.
         Assert.True(updates.RestartApp());

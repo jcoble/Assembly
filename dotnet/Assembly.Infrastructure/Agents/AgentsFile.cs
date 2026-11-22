@@ -138,6 +138,8 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         if (settings.BinaryPath != agent.Cli &&
             (AccountContext.ExecutableVariable(agent.VendorFamily) is null || settings.BinaryPath is { Length: 0 }))
             throw Refusal("runtime_binary_unsupported");
+        // No stock adapter or CLI takes a separate account folder or launch arguments from this
+        // descriptor, so a change to either is refused rather than saved and ignored.
         if (!(agent.CliArgs ?? []).SequenceEqual(settings.LaunchArguments)) throw Refusal("runtime_arguments_unsupported");
         if (settings.ShadowHome != agent.ShadowHome) throw Refusal("runtime_shadow_unsupported");
     }

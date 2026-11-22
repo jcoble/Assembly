@@ -365,7 +365,9 @@ grep -Fq 'CODEX_HOME must not be empty when configured' "$tmp/empty-owner-home.e
 [[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$empty_owner_descriptor" ]]
 echo "ok   explicit empty owner CODEX_HOME refuses without default lookup or output replacement"
 
-# Managed dev updates select lane-owned CLIs without copying/rebuilding an already current ACP bundle.
+# Managed dev updates select lane-owned CLIs where the owner has saved no path of their own, without
+# copying/rebuilding an already current ACP bundle. Codex still carries the owner's saved path
+# (/fixture/during-download, set above) and must keep it; Claude has none and takes the managed copy.
 node --input-type=module - "$tmp/agents.json" "$tmp/current-bundle" <<'JS'
 import fs from 'node:fs';
 const agents=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
@@ -382,7 +384,8 @@ node --input-type=module - "$tmp/agents.json" "$tmp/current-bundle" "$tmp/manage
 import fs from 'node:fs';import assert from 'node:assert/strict';
 const agents=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 assert.equal(agents.find(a=>a.id==='claude').args[0],fs.readFileSync(process.argv[3],'utf8'));
-for(const id of ['claude','codex'])assert.equal(agents.find(a=>a.id===id).cli,process.argv[4]+'/'+id);
+assert.equal(agents.find(a=>a.id==='claude').cli,process.argv[4]+'/claude');
+assert.equal(agents.find(a=>a.id==='codex').cli,'/fixture/during-download');
 assert.ok(agents.some(a=>a.id==='unrelated'));
 JS
 echo 'ok   managed CLI update reuses validated ACP bundle without querying or downloading a release'

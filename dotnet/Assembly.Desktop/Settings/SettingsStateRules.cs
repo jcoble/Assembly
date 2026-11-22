@@ -1,0 +1,378 @@
+using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Agents;
+using Assembly.Infrastructure.Remote.Install;
+using Assembly.Infrastructure.Updates;
+
+namespace Assembly.Desktop.Settings;
+
+/// <summary>
+/// Pure backend derivation rules for <see cref="SettingsState"/>: row states, machine states, scrubbed failures and summary.
+/// </summary>
+internal static class SettingsStateRules
+{
+    internal static bool ResolveInstalled(
+        bool isLocal,
+        AgentDescriptor? localAgent,
+        bool localDescriptorInvalid,
+        UpdateItem? adapterUpdate,
+        UpdateItem? cliUpdate,
+        SettingsStateComposer.ProviderRow? providerRow,
+        bool adapterMissingFromUpdates)
+    {
+        if (providerRow?.Installation == "not_installed" || adapterMissingFromUpdates)
+            return false;
+        if (providerRow?.Installation == "installed" || adapterUpdate?.Current is not null || cliUpdate?.Current is not null)
+            return true;
+        return isLocal && localAgent is not null && !localDescriptorInvalid;
+    }
+
+    internal static string? DeriveSignInState(
+        SettingsStateComposer.ProviderRow? providerRow,
+        SettingsStateComposer.SignInRow? activeSignIn)
+    {
+        if (activeSignIn is not null)
+        {
+            return activeSignIn.State == "waiting_for_person"
+                ? ProviderSignInState.NeedsSignIn
+                : ProviderSignInState.SigningIn;
+        }
+        return providerRow?.AuthState switch
+        {
+            "signed_in" => ProviderSignInState.SignedIn,
+            "needs_sign_in" => ProviderSignInState.NeedsSignIn,
+            "checking" => ProviderSignInState.Checking,
+            "unverified" => ProviderSignInState.Unverified,
+            "unsupported" => ProviderSignInState.Unsupported,
+            _ => null
+        };
+    }
+
+    internal static SettingsFailure? DeriveLastFailure(
+        AgentDescriptor? localAgent,
+        bool localDescriptorInvalid,
+        SettingsStateComposer.ProviderRow? providerRow,
+        SettingsStateComposer.SignInRow? activeSignIn,
+        SettingsStateComposer.SignInRow? failedSignIn,
+        bool adapterMissingFromUpdates,
+        string? problemDetail = null)
+    {
+        if (localDescriptorInvalid && localAgent is not null)
+            return FailureOf(localAgent.Invalid()!, prefix: null);
+
+        if (providerRow?.Reason is { } providerReason
+            && !(providerRow.AuthState == "signed_in" && providerReason == "interrupted"))
+            return FailureOf(providerReason, prefix: null, problemDetail);
+
+        if (activeSignIn is null
+            && failedSignIn?.Reason is { } signInReason
+            && providerRow?.AuthState != "signed_in"
+            && failedSignIn.UpdatedMs >= (providerRow?.CheckedMs ?? 0))
+            return FailureOf(signInReason, prefix: "sign_in:");
+
+        if (providerRow?.Installation == "not_installed" || adapterMissingFromUpdates)
+            return FailureOf("not_installed", prefix: null);
+
+        if (providerRow?.AuthState == "unsupported")
+            return FailureOf("unsupported", prefix: null);
+
+        return null;
+    }
+
+    internal static string? DeriveProviderMachineState(
+        SettingsMachine machine,
+        string? mirrorState,
+        SettingsStateComposer.ProviderRow? providerRow,
+        SettingsStateComposer.SignInRow? activeSignIn,
+        bool explicitlyNotInstalled,
+        bool localDescriptorInvalid,
+        SettingsFailure? lastFailure,
+        bool checkedThisRun)
+    {
+        if (machine.ConnectionState is MachineConnectionState.Offline or MachineConnectionState.Disconnected)
+            return null;
+
+        var nothingKnown = providerRow is null
+            && activeSignIn is null
+            && !explicitlyNotInstalled
+            && !localDescriptorInvalid
+            && lastFailure is null;
+        if (machine.ConnectionState == MachineConnectionState.Checking && nothingKnown && !machine.Machine.Updating)
+            return null;
+        // A machine still being checked has no fresh provider facts yet, whatever an old row says.
+        if (machine.ConnectionState == MachineConnectionState.Checking)
+            return ProviderRowState.SettingUp;
+
+        if (machine.Machine.Updating
+            || mirrorState == "snapshotting"
+            || providerRow?.AuthState == "checking"
+            || activeSignIn?.State is "starting" or "finishing")
+            return ProviderRowState.SettingUp;
+
+        if (explicitlyNotInstalled
+            || localDescriptorInvalid
+            || providerRow?.Reason is "not_installed" or "cannot_start" or "invalid_descriptor")
+            return ProviderRowState.Problem;
+
+        if (activeSignIn?.State == "waiting_for_person" || providerRow?.AuthState == "needs_sign_in")
+            return ProviderRowState.NeedsSignIn;
+
+        if (lastFailure is not null || providerRow?.AuthState is "could_not_check" or "unsupported")
+            return ProviderRowState.Problem;
+
+        // A remote with no recorded provider facts is not setting up: nothing in this build can
+        // start its first check (the remote cannot be named as a check target until it has facts),
+        // so it says not checked yet and drags neither the provider nor the summary with it.
+        if (providerRow is null && machine.Machine.Name is not null)
+            return ProviderRowState.NotChecked;
+
+        // Ready only on evidence: a check done in this run that found the provider installed and
+        // usable (a completed check records sign-in as signed in or unverified; both are post-check
+        // states). No row, a stale row, or sign-in not yet checked in this run is still setting up.
+        return providerRow is not null
+            && providerRow.Installation == "installed"
+            && providerRow.AuthState is "signed_in" or "unverified"
+            && checkedThisRun
+            ? ProviderRowState.Ready
+            : ProviderRowState.SettingUp;
+    }
+
+    internal static IReadOnlyList<ModelChoice>? DeriveSharedModels(IReadOnlyList<SettingsProviderMachine> machines)
+    {
+        // Only a checked machine votes: no facts (null) is silence, but a checked empty list is a
+        // real answer, so one machine with no models and one with some do not agree.
+        IReadOnlyList<ModelChoice>? shared = null;
+        foreach (var machine in machines)
+        {
+            if (machine.Models is not { } models)
+                continue;
+            if (shared is null)
+                shared = models;
+            else if (!shared.SequenceEqual(models))
+                return null;
+        }
+        // No models anywhere is still "no shared list to show", as before.
+        return shared is { Count: > 0 } ? shared : null;
+    }
+
+    internal static string DeriveAggregateProviderState(IReadOnlyList<SettingsProviderMachine> machines)
+    {
+        // Only machines with a known (non-null) state contribute; offline/disconnected remotes are skipped.
+        // The local machine is always present and connected, so an enabled provider always has at least
+        // one non-null machine state.
+        if (machines.Any(m => m.State == ProviderRowState.Problem))
+            return ProviderRowState.Problem;
+        if (machines.Any(m => m.State == ProviderRowState.NeedsSignIn))
+            return ProviderRowState.NeedsSignIn;
+        if (machines.Any(m => m.State == ProviderRowState.SettingUp))
+            return ProviderRowState.SettingUp;
+        // With no machine known ready there is nothing to call ready.
+        return machines.Any(m => m.State == ProviderRowState.Ready)
+            ? ProviderRowState.Ready
+            : ProviderRowState.SettingUp;
+    }
+
+    internal static string DeriveConnectionState(MachineItem item)
+    {
+        if (item.Kind == "local")
+            return MachineConnectionState.Connected;
+        if (!item.Checked)
+            return MachineConnectionState.Checking;
+        if (item.Reachable)
+            return MachineConnectionState.Connected;
+        return string.Equals(item.Reason, "disconnected", StringComparison.Ordinal)
+            ? MachineConnectionState.Disconnected
+            : MachineConnectionState.Offline;
+    }
+
+    internal static bool IsWaitingOnSessions(MachineItem item) =>
+        (item.Updating && IsWaitingWords(item.UpdateNote))
+        || (item.Restarting && IsWaitingWords(item.RestartNote));
+
+    private static bool IsWaitingWords(string? note) =>
+        note is not null && (
+            note.Contains(AppUpdate.WaitingWords, StringComparison.Ordinal)
+            || note.Contains(RemoteReleaseInstall.WaitingWords, StringComparison.Ordinal)
+            || note.Contains("waiting for running sessions", StringComparison.OrdinalIgnoreCase));
+
+    internal static string DeriveUpdateState(MachineItem item, bool waitingOnSessions)
+    {
+        if (waitingOnSessions)
+            return MachineUpdateState.WaitingOnSessions;
+        if (item.Restarting)
+            return MachineUpdateState.Restarting;
+        if (item.Updating)
+            return MachineUpdateState.Updating;
+        if (item.UpdateNote is not null || item.RestartNote is not null)
+            return MachineUpdateState.Failed;
+        if (item.Name is null && item.RestartReady is not null)
+            return MachineUpdateState.RestartRequired;
+        if (item.CantUpdate is not null)
+            return MachineUpdateState.CantUpdate;
+        if (HasOfferedBehind(item))
+            return MachineUpdateState.UpdateAvailable;
+        if (item.Updates is { Count: > 0 } && item.Updates.All(u => u.State != UpdateItem.Unknown))
+            return MachineUpdateState.UpToDate;
+        return MachineUpdateState.Unknown;
+    }
+
+    private static bool HasOfferedBehind(MachineItem item) =>
+        item.Updates is { Count: > 0 } updates && updates.Any(update =>
+            update.State == UpdateItem.Behind && !(item.RestartReady is not null && update.Kind == "desktop"));
+
+    internal static SettingsSummary DeriveSummary(
+        IReadOnlyList<SettingsProvider> providers,
+        IReadOnlyList<SettingsMachine> machines,
+        bool reconciling = false)
+    {
+        var machineLabels = machines.ToDictionary(m => m.Key, m => m.DisplayName, StringComparer.Ordinal);
+        // Working means a check, sign-in or update is actually in flight; "not checked yet in
+        // this run" alone (setting up with nothing running) does not spin the ring.
+        var working = reconciling
+            || machines.Any(m => m.UpdateState is MachineUpdateState.Updating or MachineUpdateState.Restarting)
+            || providers.Any(p => p.Enabled && p.Machines.Any(m =>
+                m.SignInState is ProviderSignInState.Checking or ProviderSignInState.SigningIn));
+        // The staged restart travels with every summary kind: it must stay visible alongside a
+        // provider problem or a sign-in warning, never hidden behind either.
+        var restartVersion = machines.FirstOrDefault(m => m.Machine.Name is null)?.Machine.RestartReady;
+        SettingsSummary Summary(string kind, string message, bool needsUser) =>
+            new(kind, message, working, needsUser, restartVersion);
+
+        // 1. Problem: provider problem or update/restart failure; offline/disconnected machines are skipped.
+        var problemProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.Problem).ToArray();
+        if (problemProviders.Length == 1)
+        {
+            var provider = problemProviders[0];
+            var badMachine = provider.Machines.FirstOrDefault(m => m.State == ProviderRowState.Problem);
+            var where = badMachine is not null && machineLabels.TryGetValue(badMachine.MachineKey, out var label)
+                ? $" on {label}"
+                : "";
+            return Summary(SettingsSummary.Problem, $"{provider.Name} has a problem{where}.", needsUser: true);
+        }
+        if (problemProviders.Length > 1)
+            return Summary(SettingsSummary.Problem, $"{problemProviders.Length} providers have problems.", needsUser: true);
+
+        var failedMachine = machines.FirstOrDefault(m => m.UpdateState == MachineUpdateState.Failed);
+        if (failedMachine is not null)
+        {
+            var action = failedMachine.Machine.RestartNote is not null && failedMachine.Machine.UpdateNote is null
+                ? "Restart"
+                : "Update";
+            return Summary(SettingsSummary.Problem, $"{action} failed on {failedMachine.DisplayName}.", needsUser: true);
+        }
+
+        // 2. Needs sign-in.
+        var signInProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.NeedsSignIn).ToArray();
+        if (signInProviders.Length == 1)
+        {
+            var provider = signInProviders[0];
+            var needing = provider.Machines.Where(m => m.State == ProviderRowState.NeedsSignIn).ToArray();
+            if (needing.Length == 1 && machineLabels.TryGetValue(needing[0].MachineKey, out var label))
+                return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {label}.", needsUser: true);
+            if (needing.Length > 1)
+                return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {needing.Length} machines.", needsUser: true);
+            return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in.", needsUser: true);
+        }
+        if (signInProviders.Length > 1)
+            return Summary(SettingsSummary.NeedsSignIn, $"{signInProviders.Length} providers need sign-in.", needsUser: true);
+
+        // 3. Waiting on running sessions.
+        var waitingMachines = machines.Where(m => m.WaitingOnSessions).ToArray();
+        if (waitingMachines.Length == 1)
+            return Summary(SettingsSummary.WaitingOnSessions, $"{waitingMachines[0].DisplayName} is waiting for running sessions to finish.", needsUser: true);
+        if (waitingMachines.Length > 1)
+            return Summary(SettingsSummary.WaitingOnSessions, $"{waitingMachines.Length} machines are waiting for running sessions to finish.", needsUser: true);
+
+        // 4. Still awaiting a check in this run: not ready, and not the user's to act on.
+        var settingUpProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.SettingUp).ToArray();
+        if (settingUpProviders.Length == 1)
+        {
+            var provider = settingUpProviders[0];
+            var settingUp = provider.Machines.Where(m => m.State == ProviderRowState.SettingUp).ToArray();
+            if (settingUp.Length == 1 && machineLabels.TryGetValue(settingUp[0].MachineKey, out var label))
+                return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up on {label}.", needsUser: false);
+            if (settingUp.Length > 1)
+                return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up on {settingUp.Length} machines.", needsUser: false);
+            return Summary(SettingsSummary.SettingUp, $"{provider.Name} is setting up.", needsUser: false);
+        }
+        if (settingUpProviders.Length > 1)
+            return Summary(SettingsSummary.SettingUp, $"{settingUpProviders.Length} providers are setting up.", needsUser: false);
+
+        // 5. Restart to finish (restartVersion already rides along above when something else leads).
+        if (restartVersion is not null)
+            return Summary(SettingsSummary.RestartToFinish, $"Restart Assembly to finish updating to {restartVersion}.", needsUser: true);
+
+        // 6. Nothing needs the user.
+        return Summary(SettingsSummary.Nothing, "Everything is ready.", needsUser: false);
+    }
+
+    private static SettingsFailure FailureOf(string rawCode, string? prefix, string? problemDetail = null)
+    {
+        var safeCode = ScrubSafeReason(rawCode);
+        var message = safeCode == "unsupported"
+            ? "Sign-in is not supported for this provider."
+            : ProviderProblems.Text(ParseProblem(safeCode));
+        // The check's own scrubbed output when this machine has it; otherwise a plain sentence.
+        // A reason code is never shown: a remote's checked detail reads the same way as a local one.
+        var detail = !string.IsNullOrWhiteSpace(problemDetail)
+            ? problemDetail
+            : DetailOf(safeCode, prefix);
+        return new SettingsFailure(message, detail);
+    }
+
+    /// <summary>The failure shown when this run's check for a provider could not even be started.</summary>
+    internal static SettingsFailure CheckDidNotRun() =>
+        new("The check could not be started.", "Assembly could not start the check for this provider on this machine.");
+
+    /// <summary>The provider's own failure when its adapter or CLI install/update failed on a machine.</summary>
+    internal static SettingsFailure InstallFailure(string? safeNote, MachineUpdateFailure failure, string machineKey) =>
+        new("The update didn't finish.",
+            string.IsNullOrWhiteSpace(safeNote) ? "Installing or updating this provider didn't finish." : safeNote,
+            SettingsFailure.RetryInstall, failure.Operation, machineKey, failure.Tool);
+
+    private static string DetailOf(string safeCode, string? prefix)
+    {
+        var sentence = safeCode switch
+        {
+            "not_installed" => "The provider's adapter is not installed on this machine.",
+            "cannot_start" => "The provider's adapter could not be started on this machine.",
+            "invalid_descriptor" => "The provider's saved configuration is incomplete.",
+            "timed_out" => "The check ran out of time before the provider answered.",
+            "adapter_crashed" => "The provider's adapter stopped while it was being checked.",
+            "network" => "The provider could not be reached for this check.",
+            "version_unknown" => "The check finished without a reported adapter version.",
+            "interrupted" => "The check was interrupted before it finished.",
+            "unsupported" => "This provider does not support sign-in from Assembly.",
+            _ => "The check could not be completed on this machine."
+        };
+        return prefix is null ? sentence : "Sign-in didn't finish. " + sentence;
+    }
+
+    // Only fixed allowlisted reason codes may ever leave the backend as failure detail.
+    private static string ScrubSafeReason(string? code) => code switch
+    {
+        "not_installed" => "not_installed",
+        "cannot_start" => "cannot_start",
+        "invalid_descriptor" => "invalid_descriptor",
+        "timed_out" => "timed_out",
+        "adapter_crashed" => "adapter_crashed",
+        "network" => "network",
+        "version_unknown" => "version_unknown",
+        "interrupted" => "interrupted",
+        "unsupported" => "unsupported",
+        _ => "adapter_error"
+    };
+
+    private static ProviderProblem ParseProblem(string safeCode) => safeCode switch
+    {
+        "not_installed" => ProviderProblem.not_installed,
+        "cannot_start" => ProviderProblem.cannot_start,
+        "invalid_descriptor" => ProviderProblem.invalid_descriptor,
+        "timed_out" => ProviderProblem.timed_out,
+        "adapter_crashed" => ProviderProblem.adapter_crashed,
+        "network" => ProviderProblem.network,
+        "version_unknown" => ProviderProblem.version_unknown,
+        "interrupted" => ProviderProblem.interrupted,
+        _ => ProviderProblem.adapter_error
+    };
+}

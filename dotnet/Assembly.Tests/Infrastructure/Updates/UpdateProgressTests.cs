@@ -227,13 +227,15 @@ public sealed class UpdateProgressTests
     [Fact]
     public async Task A_failure_says_which_piece_failed()
     {
-        var failures = new List<string>();
+        var failures = new List<UpdateFailureNote>();
         var release = new FailingRelease();
         await UpdateSources.RemotesAsync(release, [new("box", [
             new("backend", "Backend", "1.0.0", "2.0.0", UpdateItem.Behind),
             new("cli", "codex", "1.0.0", "2.0.0", UpdateItem.Behind)])], _ => { }, failures, default);
 
-        Assert.Equal(["Backend: disk full", "codex: not installed with npm"], failures);
+        Assert.Equal(["Backend: disk full", "codex: not installed with npm"], failures.Select(failure => failure.Text));
+        // The backend step names its tool even when the failure itself does not.
+        Assert.Equal("backend", failures[0].Tool);
     }
 
     private sealed class FailingRelease : IReleaseInstall

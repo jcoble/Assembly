@@ -4,7 +4,7 @@ namespace Assembly.Application.Common.Agents;
 
 /// <summary>Private transport material for a bounded check, never a wire or durable catalogue payload.</summary>
 public sealed record ProviderProbeResult(InitializeResponse? Initialize, NewSessionResponse? Session,
-    AuthStatus? AuthStatus, bool AuthRequired, string? ProblemCode);
+    AuthStatus? AuthStatus, bool AuthRequired, string? ProblemCode, string? ProblemDetail = null);
 
 /// <summary>An exact adapter instance that only its owning registry can capture.</summary>
 public abstract class ProviderAdapterCapture
