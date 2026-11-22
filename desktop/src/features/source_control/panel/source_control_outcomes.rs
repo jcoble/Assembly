@@ -4,6 +4,7 @@ use super::{PaneResult, RunningOperation, SourceControlPane};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use crate::core::state::folder_touched::FolderTouched;
 use crate::core::state::inspected_checkout::{Inspected, InspectedCheckout};
+use crate::core::state::machines::Machines;
 use crate::core::state::session_read::Shown;
 use crate::features::source_control::commit_timeline::CommitTimeline;
 use crate::features::source_control::git_branches::GitBranchList;
@@ -36,6 +37,36 @@ fn finished_label(action: &str) -> &'static str {
     }
 }
 impl SourceControlPane {
+    /// The read's machine while it can't be captured: it stopped answering, or its mirror here isn't live yet.
+    /// A local read has no route and is never away.
+    pub(super) fn away_machine(&self, cx: &App) -> Option<String> {
+        let route = self.read.read(cx).source()?.route_machine.clone()?;
+        (Machines::offline(Some(&route), cx) || !Machines::live(Some(&route), cx)).then_some(route)
+    }
+
+    /// Follows the machines list, once the socket client has started it.
+    pub(super) fn follow_machines(&mut self, cx: &mut Context<Self>) {
+        self._machines = Machines::try_global(cx)
+            .map(|machines| cx.observe(&machines, |pane, _, cx| pane.machine_changed(cx)));
+        self.machine_ready = self.away_machine(cx).is_none();
+    }
+
+    /// The machines list changed: when this read's machine crosses between ready and away, the open drawer
+    /// follows it — the outage body comes and goes with the pushed fact, and a machine back is read again.
+    fn machine_changed(&mut self, cx: &mut Context<Self>) {
+        let ready = self.away_machine(cx).is_none();
+        if ready == self.machine_ready {
+            return;
+        }
+        self.machine_ready = ready;
+        if ready {
+            self.read.update(cx, |read, cx| read.refresh(cx));
+        } else {
+            self.forget_branches();
+        }
+        cx.notify();
+    }
+
     pub(super) fn read_changed(&mut self, cx: &mut Context<Self>) {
         let (session, cleared, answers) = {
             let read = self.read.read(cx);
@@ -53,6 +84,8 @@ impl SourceControlPane {
         if changed {
             self.session_changed(session.clone(), cx);
         }
+        // A read for another session brings its own machine: readiness follows the read, not the last list change.
+        self.machine_ready = self.away_machine(cx).is_none();
         self.publish_inspected(cx);
         self.settle_place(cx);
         if matches!(self.result, Some(PaneResult::Done(_))) && answers != self.result_answers {

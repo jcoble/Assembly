@@ -16,6 +16,7 @@ use super::open_another_project::OpenAnotherProject;
 use super::pull_requests::pr_section::PrSection;
 use super::result_line::PaneResult;
 use super::stash_dialogs::Stash;
+use crate::core::state::machines::GlobalMachines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::state::sessions::Sessions;
@@ -103,6 +104,12 @@ pub struct SourceControlPane {
     reveal_read: Option<Task<()>>,
     scroll: ScrollHandle,
     _heard: Vec<Subscription>,
+    /// Follows the machines list once it starts, then the list itself: an open drawer reacts when the read's
+    /// machine goes away or comes back, instead of keeping its last good controls.
+    _machines_started: Subscription,
+    _machines: Option<Subscription>,
+    /// The read's machine could be captured last time the list or the read changed.
+    machine_ready: bool,
 }
 
 gpui_kit::actions!(source_control, [ShowSourceControl]);
@@ -229,7 +236,9 @@ impl SourceControlPane {
                 },
             ),
         ];
-        Self {
+        let machines_started =
+            cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
+        let mut pane = Self {
             focus: cx.focus_handle(),
             window: handle,
             read,
@@ -274,7 +283,12 @@ impl SourceControlPane {
             reveal_read: None,
             scroll: ScrollHandle::new(),
             _heard: heard,
-        }
+            _machines_started: machines_started,
+            _machines: None,
+            machine_ready: true,
+        };
+        pane.follow_machines(cx);
+        pane
     }
 
     /// A viewed folder a running session works in is only read, so its checkout is never disturbed.
