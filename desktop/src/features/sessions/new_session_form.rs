@@ -5,7 +5,7 @@ use gpui_kit::*;
 use serde_json::json;
 use std::rc::Rc;
 
-use crate::core::state::machines::Machines;
+use crate::core::state::machines::{Machines, THIS_MACHINE};
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::agent_config::{AgentList, AgentTarget};
@@ -261,7 +261,7 @@ impl NewSessionForm {
             .agents
             .iter()
             .find(|agent| Some(&agent.id) == self.agent.as_ref())?;
-        SignInTarget::local(self.auth_machine.as_deref()?, "This Mac", agent)
+        SignInTarget::local(self.auth_machine.as_deref()?, THIS_MACHINE, agent)
     }
     fn open_sign_in(
         &mut self,

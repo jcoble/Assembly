@@ -13,6 +13,7 @@ use super::run_card::question_on_card;
 use crate::core::engine::{EngineFeed, EngineKey};
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machines::Machines;
+use crate::core::state::machines::THIS_MACHINE;
 use crate::inline_field::DATE_TIME_SHOWN;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,11 +200,11 @@ pub fn offline_since(machine: &str, feed: &EngineFeed, cx: &App) -> Option<i64> 
     Machines::offline_since(feed.machine_name(machine)?, cx)
 }
 
-/// "This Mac" for the local engine, a saved remote's own name, or the engine's id until one is known.
+/// This machine's name ("This Mac" on a Mac) for the local engine, a saved remote's own name, or the engine's id until one is known.
 pub fn machine_label(machine: &str, feed: &EngineFeed, cx: &App) -> String {
     let local = SocketClient::try_global(cx).and_then(|socket| socket.read(cx).engine_machine());
     if local.as_deref() == Some(machine) {
-        return "This Mac".to_owned();
+        return THIS_MACHINE.to_owned();
     }
     feed.machine_name(machine).unwrap_or(machine).to_owned()
 }
