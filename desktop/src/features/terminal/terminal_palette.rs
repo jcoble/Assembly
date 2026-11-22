@@ -16,9 +16,7 @@ pub struct Palette {
 
 pub fn palette(theme: ThemeId) -> Option<&'static Palette> {
     match theme {
-        ThemeId::Assembly | ThemeId::AssemblyGlass | ThemeId::Amy | ThemeId::Cobalt => {
-            Some(&ASSEMBLY)
-        }
+        ThemeId::Assembly | ThemeId::Amy | ThemeId::Cobalt => Some(&ASSEMBLY),
         ThemeId::Houston => Some(&HOUSTON),
         ThemeId::Dracula => Some(&DRACULA),
         ThemeId::TokyoNight => Some(&TOKYO_NIGHT),

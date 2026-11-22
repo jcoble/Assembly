@@ -33,7 +33,6 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let border = cx.theme().border.opacity(0.6);
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let pane = cx.entity().downgrade();
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
@@ -46,7 +45,9 @@ impl Render for SessionsPane {
             .on_click(cx.listener(|pane, _, window, cx| pane.show_draft(window, cx)));
         self.follow_entries(window, cx);
         self.running_drawn.set(false);
-        let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
+        let list = list(self.lines.clone(), self.line_renderer(cx))
+            .flex_1()
+            .px(SPACE[4]);
         let empty = match self.rail.loaded {
             true => "No sessions here.",
             false => empty_words(state.as_ref(), Launcher::update_is_finishing(cx)),
@@ -61,19 +62,18 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))
-            // The pills, then a rule across the card, as the mock's `.pills` has.
+            // The filter chips, 12 under the search and 6 above the list, as the mock's `.chips`.
             .child(
                 v_flex()
-                    .border_b_1()
-                    .border_color(border)
+                    .pt(SPACE[5])
+                    .pb(SPACE[2])
+                    .px(SPACE[4])
                     .child(self.pills.clone())
                     // Its own line under the pills, so it never covers one: the rows' amber question chip.
                     .children(needs_words(self.rail.totals.needs).map(|words| {
                         h_flex()
                             .justify_end()
-                            .mt(px(-2.))
-                            .pr(px(12.))
-                            .pb(px(8.))
+                            .pt(SPACE[2])
                             .child(DotChip::new(words, Tone::Warning).named(ids::NEEDS_YOU))
                     })),
             )
@@ -81,8 +81,8 @@ impl Render for SessionsPane {
             .when_some(self.row_error.clone(), |pane, error| {
                 pane.child(
                     say(ids::ROW_ERROR, error)
-                        .px_3()
-                        .py_1()
+                        .px(SPACE[4])
+                        .py(SPACE[1])
                         .text_role(TextRole::Body, cx)
                         .text_color(danger),
                 )
@@ -91,8 +91,8 @@ impl Render for SessionsPane {
                 false => pane.child(list),
                 true => pane.child(
                     say(ids::EMPTY, empty)
-                        .px_3()
-                        .py_2()
+                        .px(SPACE[4])
+                        .py(SPACE[3])
                         .text_role(TextRole::Body, cx)
                         .text_color(muted),
                 ),
@@ -100,8 +100,8 @@ impl Render for SessionsPane {
             .when_some(self.rail.error.clone(), |pane, error| {
                 pane.child(
                     h_flex()
-                        .px_3()
-                        .py_1()
+                        .px(SPACE[4])
+                        .py(SPACE[1])
                         .gap_2()
                         .text_role(TextRole::Body, cx)
                         .text_color(danger)

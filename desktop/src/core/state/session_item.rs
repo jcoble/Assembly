@@ -1,6 +1,7 @@
 //! `SessionItem` is one session as the `sessions` topic sends it
 //! (dotnet/Assembly.Application/Features/Chat/Sessions/SessionItem.cs).
 
+use crate::core::ui::provider_name::provider_name;
 use serde::Deserialize;
 
 /// What a session in no project is filed under.
@@ -61,11 +62,12 @@ impl SessionItem {
         }
     }
 
-    /// Its agent, and its machine when it isn't this computer: "claude · Workbox Test".
+    /// Its provider as people read it, and its machine when it isn't this computer: "Claude · Workbox Test".
     pub fn place(&self) -> String {
+        let provider = provider_name(&self.agent);
         match &self.machine {
-            Some(machine) if !machine.is_empty() => format!("{} · {machine}", self.agent),
-            _ => self.agent.clone(),
+            Some(machine) if !machine.is_empty() => format!("{provider} · {machine}"),
+            _ => provider,
         }
     }
 }

@@ -224,12 +224,12 @@ fn the_window_opens_in_the_old_layout(cx: &mut TestAppContext) {
     let [left, right, bottom] = docks(&layout);
     assert_eq!(
         (&left["size"], &left["open"]),
-        (&json!(326.0), &json!(true))
+        (&json!(328.0), &json!(true))
     );
     assert_eq!(pane_names(&left["panel"]), ["Sessions", "Files", "Search"]);
     assert_eq!(
         (&right["size"], &right["open"]),
-        (&json!(320.0), &json!(false))
+        (&json!(340.0), &json!(false))
     );
     assert_eq!(
         pane_names(&right["panel"]),
@@ -340,9 +340,9 @@ fn a_pane_this_build_does_not_know_survives_a_save(cx: &mut TestAppContext) {
 fn dragging_the_sessions_edge_saves_once_when_the_drag_ends(cx: &mut TestAppContext) {
     let (frame, writes, cx) = open(None, cx);
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    // The sessions column is 326 wide, so its edge sits just inside x = 326; the panes start under the 42 px top bar.
+    // The sessions column is 328 wide, so its edge sits just inside x = 328; the panes start under the top bar.
     let y = px(400.);
-    cx.simulate_mouse_down(point(px(324.5), y), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_down(point(px(326.5), y), MouseButton::Left, Modifiers::none());
     for x in [330., 360., 400.] {
         cx.simulate_mouse_move(point(px(x), y), MouseButton::Left, Modifiers::none());
     }

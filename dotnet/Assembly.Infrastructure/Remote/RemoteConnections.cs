@@ -278,8 +278,16 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));
                         if (probe) await _feature.ConnectAsync(remote, stop.Token);
                         else
-                            try { await remote.ProbeAsync(stop.Token); }
-                            catch (MachineUnreachable) { }
+                        {
+                            try
+                            {
+                                await remote.ProbeAsync(stop.Token);
+                                // Let startup subscribers see the initial live fact in their snapshot.
+                                // A stalled mirror must not keep the desktop from opening with its saved copy.
+                                await mirror.InitialFollow.WaitAsync(TimeSpan.FromSeconds(5), stop.Token);
+                            }
+                            catch (Exception error) when (error is MachineUnreachable or TimeoutException) { }
+                        }
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                     catch (Exception error) { scoped.Unreachable(name, error.Message); }

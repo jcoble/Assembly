@@ -1,20 +1,27 @@
 //! `SentMessage` draws a prompt: its text, folded past ten lines until opened, the images attached to it (their
 //! "Attached image:" lines taken off the text) as chips that open the lightbox, and who sent it when another
-//! session did. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
+//! session did. The prompt sits in the kit's chat bubble. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::bubble::{Bubble, BubbleContent, BubbleVariant};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::message::MessageAlignment;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::CORNER_BUBBLE;
 
 use super::session_action::{OnAction, SessionAction};
+use crate::components::chip_button::chip_button;
+use crate::core::ui::access::Named as _;
 
-/// The bubble's corners: the design system's radius-xl.
-const BUBBLE_RADIUS: Pixels = px(20.);
-/// The bubble's widest, the approved mock's `.bubble`.
+/// The bubble's widest and its padding, the approved mock's `.bubble`.
 const BUBBLE_WIDTH: Pixels = px(470.);
+const BUBBLE_PADDING_X: Pixels = px(16.);
+const BUBBLE_PADDING_Y: Pixels = px(10.);
 /// A prompt folds past this many lines.
 pub const FOLD_LINES: usize = 10;
 
@@ -48,88 +55,107 @@ pub fn shown(text: &str, open: bool) -> (&str, bool) {
 
 impl RenderOnce for SentMessage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
+        let look = Look::of(cx);
         let (chat_size, chat_height) =
             Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (text, long) = shown(&self.text, self.open);
+        // Show more and less: the kit's text button, in Meta.
         let toggle = long.then(|| {
             let (key, on_action) = (self.key.clone(), self.on_action.clone());
-            div()
-                .id(SharedString::from(format!("{}:more", self.key)))
-                .text_role(TextRole::Meta, cx)
-                .text_color(theme.link)
-                .cursor_pointer()
+            Button::new(SharedString::from(format!("{}:more", self.key)))
+                .text()
+                .self_start()
+                .child(div().text_role(TextRole::Meta, cx).child(if self.open {
+                    "Show less"
+                } else {
+                    "Show more"
+                }))
                 .on_click(move |_, window, cx| {
                     on_action(SessionAction::Toggle { key: key.clone() }, window, cx)
                 })
-                .child(if self.open { "Show less" } else { "Show more" })
         });
         let sender = self
             .sender_label
             .clone()
             .or_else(|| self.sender.as_ref().map(|_| "From another session".into()))
             .map(|label| {
-                let node = div()
-                    .debug_selector(|| "sent-message-sender".into())
-                    .id(SharedString::from(format!("{}:sender", self.key)))
-                    .text_role(TextRole::Meta, cx)
-                    .text_color(theme.link)
-                    .child(label);
-                if let Some((machine, session_id)) = self
+                // A sender whose session can be opened is the kit's link button; one that can't is plain words.
+                let linked = self
                     .sender_machine
                     .clone()
                     .filter(|machine| !machine.is_empty())
-                    .zip(self.sender.clone().filter(|id| !id.is_empty()))
-                {
-                    let on_action = self.on_action.clone();
-                    node.cursor_pointer().on_click(move |_, window, cx| {
-                        on_action(
-                            SessionAction::OpenSender {
-                                key: crate::core::engine::SessionKey {
-                                    machine: machine.clone(),
-                                    id: session_id.clone(),
-                                },
-                            },
-                            window,
-                            cx,
-                        )
-                    })
-                } else {
-                    node
+                    .zip(self.sender.clone().filter(|id| !id.is_empty()));
+                match linked {
+                    Some((machine, session_id)) => {
+                        let on_action = self.on_action.clone();
+                        Button::new(SharedString::from(format!("{}:sender", self.key)))
+                            .named(label.clone())
+                            .link()
+                            .self_end()
+                            .debug_selector(|| "sent-message-sender".into())
+                            .child(div().text_role(TextRole::Meta, cx).child(label))
+                            .on_click(move |_, window, cx| {
+                                on_action(
+                                    SessionAction::OpenSender {
+                                        key: crate::core::engine::SessionKey {
+                                            machine: machine.clone(),
+                                            id: session_id.clone(),
+                                        },
+                                    },
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .into_any_element()
+                    }
+                    None => div()
+                        .debug_selector(|| "sent-message-sender".into())
+                        .text_role(TextRole::Meta, cx)
+                        .text_color(look.text_2)
+                        .child(label)
+                        .into_any_element(),
                 }
             });
+        // Each attached image is the shared chip; a click opens it full size.
         let images = self.images.iter().enumerate().map(|(at, (path, name))| {
             let on_action = self.on_action.clone();
             let file = super::lightbox::last_part(path).to_string();
-            div()
-                .id(SharedString::from(format!("{}:image:{at}", self.key)))
-                .px_2()
-                .py_1()
-                .rounded(theme.radius)
-                .border_1()
-                .border_color(theme.border)
-                .text_role(TextRole::Meta, cx)
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    let name = file.clone();
-                    on_action(SessionAction::ShowImage { name }, window, cx)
-                })
-                .child(name.clone())
+            chip_button(
+                SharedString::from(format!("{}:image:{at}", self.key)),
+                false,
+                cx,
+            )
+            .named(name.clone())
+            .child(div().text_role(TextRole::Meta, cx).child(name.clone()))
+            .on_click(move |_, window, cx| {
+                let name = file.clone();
+                on_action(SessionAction::ShowImage { name }, window, cx)
+            })
         });
         v_flex()
             .ml_auto()
             .max_w(BUBBLE_WIDTH)
             .gap_1()
             .children(sender)
+            // The kit's chat bubble, its surface drawn as the mock's `.bubble`.
             .child(
-                v_flex()
-                    .px(px(16.))
-                    .py(px(10.))
-                    .text_size(chat_size)
-                    .line_height(chat_height)
-                    .rounded(BUBBLE_RADIUS)
-                    .bg(theme.secondary)
-                    .gap_1()
+                Bubble::new()
+                    .with_variant(BubbleVariant::Outline)
+                    .alignment(MessageAlignment::End)
+                    .max_w_full()
+                    .content(
+                        BubbleContent::new()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px(BUBBLE_PADDING_X)
+                            .py(BUBBLE_PADDING_Y)
+                            .text_size(chat_size)
+                            .line_height(chat_height)
+                            .rounded(CORNER_BUBBLE)
+                            .bg(look.bubble)
+                            .border_color(look.bubble_border),
+                    )
                     .when(!text.is_empty(), |bubble| bubble.child(text.to_string()))
                     .children(toggle),
             )

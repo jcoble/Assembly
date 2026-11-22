@@ -13,6 +13,8 @@ public static partial class SeedScenario
             new Dictionary<string, string> { ["build"] = "succeeded", ["checks"] = "succeeded", ["review"] = "succeeded", ["approve"] = "succeeded" }),
         new("rate-limit-review", "harbor-rate-limit", "harbor-api", ShipFeature, "Ship per-tenant rate limits", "needs_me", 35,
             new Dictionary<string, string> { ["build"] = "succeeded", ["checks"] = "succeeded", ["review"] = "succeeded" }, OpenGate: true, WorkerChat: "harbor-tenant-audit"),
+        new("dlq-review", "harbor-dlq", "harbor-api", ShipFeature, "Ship the dead-letter queue", "needs_me", 90,
+            new Dictionary<string, string> { ["build"] = "succeeded", ["checks"] = "succeeded", ["review"] = "succeeded" }, OpenGate: true),
         new("signature-failed", "harbor-signature", "harbor-api", ShipFeature, "Ship signature rotation", "failed", 180,
             new Dictionary<string, string> { ["build"] = "succeeded", ["checks"] = "failed", ["review"] = "skipped", ["approve"] = "skipped" }, "npm test exited 1: 2 failures in webhook-signature.test.ts"),
         new("otel-cancelled", "harbor-otel", "harbor-api", ShipFeature, "Ship OpenTelemetry spike", "cancelled", 900,

@@ -8,10 +8,12 @@
 use std::{path::PathBuf, time::Duration};
 
 use gpui_kit::base::Spring;
+use gpui_kit::base::input::CursorBlink;
 use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{App, Window, WindowBackgroundAppearance};
 
 use super::fade;
+use super::look::{OwnKeys, ThemesDir};
 use super::theme_id::ThemeId;
 
 /// The theme files, read in place from the source tree. A packaged app has its own in `Contents/Resources/themes`.
@@ -20,12 +22,18 @@ pub const THEMES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
 /// The design system's slowest motion, which the kit's slow step and move spring are brought down to.
 const MOTION_CEILING: Duration = Duration::from_millis(180);
 
+/// How long a focused field's caret keeps blinking after the last keystroke, click or focus before it holds still.
+/// Each blink repaints the whole window, so a caret that blinks forever keeps an idle window busy.
+const CARET_REST: Duration = Duration::from_secs(5);
+
 /// Watches the theme folder `dir` and calls `on_ready` once the files have loaded. The kit calls it exactly once,
 /// from the one-off load task (registry.rs:105-115); a later file change only reloads (registry.rs:224-227). The
 /// window opens in `on_ready` and calls `set` inside its open call, so the first frame is already the theme in force,
 /// never the kit's built-in light one. A folder that can't be watched or read still calls `on_ready`: the kit logs it
 /// and loads what it can (registry.rs:105-115, 248-266), and `set` then leaves the kit's default in force.
 pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
+    // Kept so `set` reads each theme's `assembly` section (look.rs) from the same files the kit loads.
+    cx.set_global(ThemesDir(dir.clone()));
     // Kit 0.8.1 returns Ok once the load task is scheduled; anything that goes wrong after that is logged by the kit.
     if let Err(error) = ThemeRegistry::watch_dir(dir, cx, on_ready) {
         eprintln!(
@@ -34,17 +42,14 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
     }
 }
 
-/// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
-/// opaque for the rest, brings the kit's 280 ms slow step and move spring down to 180 ms, and starts the fade from
-/// the old theme (fade.rs). Off macOS there's no blur, so glass gives Assembly. A theme whose file didn't load leaves
-/// the theme in force as it is. The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme`
-/// and a light one in `light_theme`, and switches to its mode (schema.rs:1064-1103).
+/// Puts `id` in force: makes its file the kit's active theme, reads its file's `assembly` section for the look's own
+/// tokens (look.rs), sets the window background to blurred for glass and opaque for the rest, brings the kit's 280 ms
+/// slow step and move spring down to 180 ms, lets a focused field's caret rest after `CARET_REST`, and starts the fade
+/// from the old theme (fade.rs). Off macOS there's no blur, so the window stays opaque and the look draws its glass
+/// solid. A theme whose file didn't load leaves the theme in force as it is.
+/// The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme` and a light one in
+/// `light_theme`, and switches to its mode (schema.rs:1064-1103).
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
-    let id = if id.is_glass() && !cfg!(target_os = "macos") {
-        ThemeId::Assembly
-    } else {
-        id
-    };
     let Some(config) = ThemeRegistry::global(cx)
         .themes()
         .get(id.theme_name())
@@ -54,6 +59,8 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     };
     let before = Theme::global(cx);
     let (old_name, old_ground) = (before.theme_name().clone(), before.background);
+    // Before the kit's colours change, so the redraw their update asks for already has the look's own tokens.
+    OwnKeys::load(id, cx);
     // Applying the file inside the update leaves its colours as applied: the kit reloads over an update only when the
     // mode changed to a theme the update didn't install (theme/mod.rs:310-327).
     Theme::update(cx, |theme| {
@@ -63,6 +70,8 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
         theme.motion.spring_move = Spring::new(MOTION_CEILING)
             .with_damping(0.85)
             .with_epsilon(0.1);
+        // The kit's 500 ms blink while someone is typing, then a steady caret, so an idle window draws nothing.
+        theme.cursor_blink = CursorBlink::default().with_idle_timeout(CARET_REST);
     });
     // A fade only between two of our themes with different grounds: not at the window's first `set` (from the kit's
     // default), not when the theme in force is set again, and not to a ThemeMirror entry, whose ground is Assembly's.
@@ -75,7 +84,7 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     {
         fade::record(old_ground, cx);
     }
-    window.set_background_appearance(if id.is_glass() {
+    window.set_background_appearance(if id.is_glass() && cfg!(target_os = "macos") {
         WindowBackgroundAppearance::Blurred
     } else {
         WindowBackgroundAppearance::Opaque
@@ -253,23 +262,6 @@ mod tests {
                 ThemeId::RosePineDawn.theme_name()
             );
             assert!(!theme.is_dark());
-        });
-    }
-
-    #[gpui::test]
-    fn glass_gives_assembly_off_macos(cx: &mut TestAppContext) {
-        load_themes(cx);
-        set_in_new_window(ThemeId::AssemblyGlass, cx);
-        let expected = if cfg!(target_os = "macos") {
-            ThemeId::AssemblyGlass
-        } else {
-            ThemeId::Assembly
-        };
-        cx.update(|cx| {
-            assert_eq!(
-                Theme::global(cx).theme_name().as_ref(),
-                expected.theme_name()
-            )
         });
     }
 

@@ -30,6 +30,9 @@ internal sealed class EngineMirror : IAsyncDisposable
     private LiveMirrorBinding? _live;
     private long _readinessLifetime;
     private bool _stopping;
+    private readonly TaskCompletionSource _initialFollow = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    /// <summary>Completes after the first catch-up is announced or the initial follow ends.</summary>
+    internal Task InitialFollow => _initialFollow.Task;
     public event Action? CaughtUp;
     /// <summary>The caught-up binding was lost (a resnapshot, a dropped connection): no longer live.</summary>
     public event Action? LostReadiness;
@@ -161,6 +164,7 @@ internal sealed class EngineMirror : IAsyncDisposable
                     finally
                     {
                         lock (_gate) { LoseReadiness(); if (ReferenceEquals(_connection, connection)) _connection = null; }
+                        _initialFollow.TrySetResult();
                         await connection.FinishAsync();
                     }
                 }
@@ -268,6 +272,7 @@ internal sealed class EngineMirror : IAsyncDisposable
                         caughtUp = true;
                     }
                     CaughtUp?.Invoke();
+                    _initialFollow.TrySetResult();
                 }
             }
         }

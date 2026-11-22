@@ -18,7 +18,7 @@ fn the_old_apps_themes_keep_their_terminal_colours() {
 fn the_assembly_shell_themes_share_its_colours_and_the_light_ones_have_none() {
     let assembly = palette(ThemeId::Assembly).unwrap();
     assert_eq!(assembly.cursor, 0x1ed760);
-    for theme in [ThemeId::AssemblyGlass, ThemeId::Amy, ThemeId::Cobalt] {
+    for theme in [ThemeId::Amy, ThemeId::Cobalt] {
         assert!(std::ptr::eq(palette(theme).unwrap(), assembly));
     }
     for theme in [

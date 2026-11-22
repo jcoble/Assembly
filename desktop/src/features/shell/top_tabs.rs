@@ -1,20 +1,36 @@
 //! Content tabs in the window chrome, backed by the dock's existing panels and layout. Selection, closing and
 //! movement still go through the dock; this bar keeps no second list of open tabs.
+//!
+//! The kit's tab bar in its segmented variant with its track cleared, so the strip keeps the kit's tab-list role,
+//! wheel scrolling, reveal of a clipped tab and keyboard focus; each tab's close is a named kit icon button. Called by
+//! the top bar.
 
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanelView, ClosePanel, DockArea, DockPlacement, DragPanel, InsertTarget, NodeId, PaneRef,
     PanelHandle,
 };
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::theme::metrics::BUTTON_HEIGHT;
 use crate::core::ui::access::Control as _;
+use crate::core::ui::access::Named as _;
 use crate::core::ui::access::control_ids::content_tab;
+use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
+
+/// A tab's widest, so a long title shortens rather than pushing the others off the bar.
+const TAB_MAX_WIDTH: Pixels = px(220.);
+/// The tab's own icon and the close x.
+const TAB_GLYPH: Pixels = px(16.);
+const CLOSE_GLYPH: Pixels = px(14.);
+/// What follows the pointer while a tab is dragged.
+const DRAG_SIZE: Size<Pixels> = size(px(140.), BUTTON_HEIGHT);
 
 struct ContentTab {
     panel: Arc<dyn BasePanelView>,
@@ -30,6 +46,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
     let Some(tree) = area.layout(DockPlacement::Center) else {
         return Empty.into_any_element();
     };
+    // Every visible panel in the center, in its tab group's order.
     let mut tabs = Vec::new();
     tree.root().walk(&mut |node| {
         if let PaneRef::Tabs { panels, active_ix } = node.kind() {
@@ -46,95 +63,125 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
             }
         }
     });
+    // The active tab: the shown one that holds the keyboard, else the first shown one.
     let selected = tabs
         .iter()
         .position(|tab| tab.shown && tab.panel.focus_handle(cx).contains_focused(window, cx))
         .or_else(|| tabs.iter().position(|tab| tab.shown))
         .unwrap_or(0);
-    let target = cx.theme().tokens.drop_target;
-    let muted = cx.theme().muted_foreground;
-    let hover = cx.theme().secondary_hover;
+    let strip = revealing(&tabs, selected, window, cx);
     let chips = tabs
         .into_iter()
-        .map(|tab| {
-            let id = tab.panel.panel_id(cx);
-            let name = tab.panel.panel_name(cx);
-            let title = PanelHandle::of(&tab.panel)
-                .map(|handle| handle.title(window, cx))
-                .unwrap_or_else(|| SharedString::from(name).into_any_element());
-            let select = dock.clone();
-            let close = dock.clone();
-            let drop = dock.clone();
-            let panel = tab.panel.clone();
-            let chip = Tab::new()
-                .debug_selector(move || format!("top-tab-{name}"))
-                .control(content_tab(name), name)
-                .prefix(Icon::new(icon(name)).size(px(16.)))
-                .child(title)
-                .on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                    select.update(cx, |dock, cx| dock.select_panel(id, window, cx));
-                })
-                .when(tab.panel.closable(cx), |chip| {
-                    chip.suffix(
-                        div()
-                            .id(("close-content-tab", id.as_u64()))
-                            .size(px(22.))
-                            .rounded(px(6.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(muted)
-                            .hover(|close| close.bg(hover))
-                            .child(Icon::new(IconName::X).size(px(13.)))
-                            .on_click(move |_, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                                cx.stop_propagation();
-                                close.update(cx, |dock, cx| dock.select_panel(id, window, cx));
-                                panel.focus_handle(cx).focus(window, cx);
-                                // Keep the kit's close path and its panel/group refusal rules.
-                                window.dispatch_action(Box::new(ClosePanel), cx);
-                            }),
-                    )
-                });
-            let chip = chip.when(tab.draggable, |chip| {
-                chip.on_drag(DragPanel::new(id, tab.node), move |drag, offset, _, cx| {
-                    cx.stop_propagation();
-                    drag.set_drag_offset(offset);
-                    drag.set_preview_size(size(px(140.), px(32.)));
-                    cx.new(|_| Preview(name))
-                })
-            });
-            chip.drag_over::<DragPanel>(move |chip, _, _, _| chip.bg(target))
-                .on_drop(move |drag: &DragPanel, window, cx| {
-                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
-                    drop.update(cx, |dock, cx| {
-                        if !dock.is_locked() && !dock.is_zoomed() {
-                            dock.move_panel(
-                                drag.panel(),
-                                InsertTarget::Tabs {
-                                    node: tab.node,
-                                    ix: Some(tab.ix),
-                                    activate: true,
-                                },
-                                window,
-                                cx,
-                            );
-                        }
-                    });
-                })
-        })
+        .map(|tab| tab_of(tab, &dock, cx))
         .collect::<Vec<_>>();
     TabBar::new("chrome-content-tabs")
-        .folder()
-        .max_width(px(220.))
+        .segmented()
+        // No track behind the tabs, so they sit on the bar as separate chips with only the open one filled, as the
+        // old app's tab row did.
+        .bg(cx.theme().transparent)
+        .max_width(TAB_MAX_WIDTH)
         .selected_index(selected)
+        // Scrolled by the handle that keeps the open tab in view, with the kit's menu of every tab for those
+        // scrolled out of sight.
+        .track_scroll(&strip)
+        .menu(true)
         .children(chips)
-        .flex_1()
+        // Sized to its tabs, and shrinking (the kit then scrolls it) when the bar runs out of room.
         .min_w_0()
         .into_any_element()
 }
 
+/// The strip's scroll handle, kept across frames. When another tab becomes the open one (opened, picked from the
+/// menu, or chosen anywhere but a click on its chip), it scrolls that tab into view; the kit itself only does so for a
+/// click.
+fn revealing(
+    tabs: &[ContentTab],
+    selected: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> ScrollHandle {
+    let strip = window
+        .use_keyed_state("chrome-content-tabs-scroll", cx, |_, _| ScrollHandle::new())
+        .read(cx)
+        .clone();
+    // Which pane was last brought into view, by its id, so a tab added or closed before it doesn't count as a change.
+    let shown = window.use_keyed_state("chrome-content-tabs-shown", cx, |_, _| None);
+    let open = tabs.get(selected).map(|tab| tab.panel.panel_id(cx));
+    if *shown.read(cx) != open {
+        shown.update(cx, |shown, _| *shown = open);
+        strip.scroll_to_item(selected);
+    }
+    strip
+}
+
+/// One tab: a click shows its pane, its x closes it through the kit's close path, a drag carries it to another
+/// group, and a tab dropped on it lands in its place.
+fn tab_of(tab: ContentTab, dock: &Entity<DockArea>, cx: &mut App) -> Tab {
+    let id = tab.panel.panel_id(cx);
+    let name = tab.panel.panel_name(cx);
+    // What the tab is called: the pane's own short name when it has one (a file tab's file name), else its kind
+    // ("Chat", "Changes"). The chip shows it, a screen reader reads it, and the kit's menu of tabs lists it.
+    let label = PanelHandle::of(&tab.panel)
+        .and_then(|handle| handle.tab_name(cx))
+        .unwrap_or_else(|| SharedString::from(name));
+    let target = cx.theme().tokens.drop_target;
+    let (select, close, drop) = (dock.clone(), dock.clone(), dock.clone());
+    let panel = tab.panel.clone();
+    Tab::new()
+        .debug_selector(move || format!("top-tab-{name}"))
+        .control(content_tab(name), label.clone())
+        .prefix(Icon::new(icon(name)).size(TAB_GLYPH))
+        .label(label.clone())
+        .on_click(move |_, window, cx| {
+            cx.defer(WorkspaceCoordinator::changed);
+            select.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+        })
+        .when(tab.panel.closable(cx), |chip| {
+            chip.suffix(
+                Button::new(("close-content-tab", id.as_u64()))
+                    .named(format!("Close {label}"))
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(IconName::X).size(CLOSE_GLYPH))
+                    .on_click(move |_, window, cx| {
+                        cx.defer(WorkspaceCoordinator::changed);
+                        cx.stop_propagation();
+                        close.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+                        panel.focus_handle(cx).focus(window, cx);
+                        // Keep the kit's close path and its panel/group refusal rules.
+                        window.dispatch_action(Box::new(ClosePanel), cx);
+                    }),
+            )
+        })
+        .when(tab.draggable, |chip| {
+            chip.on_drag(DragPanel::new(id, tab.node), move |drag, offset, _, cx| {
+                cx.stop_propagation();
+                drag.set_drag_offset(offset);
+                drag.set_preview_size(DRAG_SIZE);
+                cx.new(|_| super::drag_chip::DragChip(name))
+            })
+        })
+        .drag_over::<DragPanel>(move |chip, _, _, _| chip.bg(target))
+        .on_drop(move |drag: &DragPanel, window, cx| {
+            cx.defer(WorkspaceCoordinator::changed);
+            drop.update(cx, |dock, cx| {
+                if !dock.is_locked() && !dock.is_zoomed() {
+                    dock.move_panel(
+                        drag.panel(),
+                        InsertTarget::Tabs {
+                            node: tab.node,
+                            ix: Some(tab.ix),
+                            activate: true,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            });
+        })
+}
+
+/// The icon at the front of a tab, by its pane.
 fn icon(name: &str) -> IconName {
     match name {
         "Chat" => IconName::MessageCircle,
@@ -142,18 +189,5 @@ fn icon(name: &str) -> IconName {
         "Build Board" => IconName::LayoutDashboard,
         "Settings" => IconName::Settings,
         _ => IconName::File,
-    }
-}
-
-struct Preview(&'static str);
-
-impl Render for Preview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .h(px(32.))
-            .px_3()
-            .rounded(px(8.))
-            .bg(cx.theme().secondary)
-            .child(self.0)
     }
 }

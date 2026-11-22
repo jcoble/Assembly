@@ -15,6 +15,11 @@ use super::sessions_pane::SessionsPane;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 
+/// Between rows, and a helper's indent and its gap after the tree line (the mockup's `.subs`).
+const ROW_GAP: Pixels = px(1.);
+const TREE_INDENT: Pixels = px(17.);
+const TREE_PADDING: Pixels = px(9.);
+
 /// Load the next page when the line this far from the end is in view.
 const LOAD_OLDER_WITHIN: usize = 20;
 
@@ -258,11 +263,12 @@ impl SessionsPane {
                         row_height,
                     );
                     let band = crate::core::ui::three_line_row::selected_fill(cx);
-                    let radius = gpui_kit::component::ActiveTheme::theme(cx).radius;
+                    let helper = entry.depth > 0;
+                    let tree = crate::core::theme::look::Look::of(cx).tree;
                     gpui_kit::component::v_flex()
                         .id(SharedString::from(format!("rail-header:{key}")))
                         .w_full()
-                        .rounded(radius)
+                        .rounded(crate::core::theme::metrics::CORNER_FIELD)
                         .overflow_hidden()
                         .when(showing, |row| row.bg(band))
                         .on_key_down(move |event, _, cx| {
@@ -286,7 +292,26 @@ impl SessionsPane {
                         })
                         .child(SessionRow::new(*entry, context))
                         .child(growing)
-                        .map(|row| div().w_full().px_2().py_px().child(row))
+                        // Rows sit 1 apart. A helper (a session another started) hangs under its starter on the
+                        // tree line, as the old app had it.
+                        .map(|row| {
+                            // The indent is padding on the full-width line, so a helper's row narrows rather
+                            // than running past the column's edge.
+                            let row = match helper {
+                                true => div()
+                                    .pl(TREE_PADDING)
+                                    .border_l_1()
+                                    .border_color(tree)
+                                    .child(row)
+                                    .into_any_element(),
+                                false => row.into_any_element(),
+                            };
+                            div()
+                                .w_full()
+                                .pb(ROW_GAP)
+                                .when(helper, |line| line.pl(TREE_INDENT))
+                                .child(row)
+                        })
                         .into_any_element()
                 }
             }

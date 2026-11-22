@@ -12,6 +12,13 @@ use crate::core::socket::update::Update;
 
 const TOPIC: &str = "machines";
 
+/// What every label calls the machine the app runs on: "This Mac" on a Mac, "This computer" anywhere else.
+pub const THIS_MACHINE: &str = if cfg!(target_os = "macos") {
+    "This Mac"
+} else {
+    "This computer"
+};
+
 pub struct Machines {
     /// In the order they first came, by the topic's key: the name, or "local" for this machine.
     machines: Vec<(String, Machine)>,

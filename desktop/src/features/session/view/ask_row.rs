@@ -5,15 +5,19 @@
 //! title. It's an `ExpandRow` (pane_expand.rs), so its line opens and shuts it like any row that grows; a settled one
 //! opens to what it asked. Replaces chat/Ask.svelte.
 
+use crate::core::theme::look::Look;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 use serde_json::Value;
 
 use super::grow::chevron;
+
+/// An open question's mark.
+const ASK_ICON: Pixels = px(16.);
 use super::session_action::{OnAction, SessionAction};
 use crate::core::ui::ask::answer_words::option_words;
 use crate::core::ui::ask::ask_questionnaire::OnAnswer;
@@ -119,7 +123,7 @@ impl AskRow {
     /// Open, the 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you". Settled, a muted
     /// tool line: a check (a cross if denied or cancelled), what it was answered with, the title, then the chevron.
     pub fn head(&self, grown: f32, cx: &App) -> Div {
-        let theme = cx.theme();
+        let look = Look::of(cx);
         let open = self.ask.state == "open";
         let kind = if self.ask.kind == "permission" {
             "Permission"
@@ -139,13 +143,13 @@ impl AskRow {
                 .h(px(22.))
                 .gap_2()
                 .text_role(TextRole::Body, cx)
-                .text_color(theme.muted_foreground)
+                .text_color(look.text_3)
                 .child(Icon::new(mark).xsmall())
                 .child(div().flex_none().max_w(px(240.)).truncate().child(word))
                 .child(div().min_w_0().truncate().child(title))
                 .child(chevron(grown));
         }
-        // The mock's `.confirm` title: a 15 px warning mark, the title at medium weight; "Needs you" and the chevron
+        // The look's question head: the amber mark, the title in text-1 at 600; "Needs you" in amber and the chevron
         // that shuts it at the right.
         let mark = if self.ask.kind == "permission" {
             Glyph::TriangleAlert
@@ -156,22 +160,24 @@ impl AskRow {
             .h(px(28.))
             .gap_2()
             .text_role(TextRole::Body, cx)
-            .child(Icon::new(mark).size(px(15.)).text_color(theme.warning))
+            .child(Icon::new(mark).size(ASK_ICON).text_color(look.needs_you))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(look.text_1)
+                    .font_weight(FontWeight::SEMIBOLD)
                     .child(title),
             )
             .child(
                 div()
                     .text_role(TextRole::Meta, cx)
-                    .text_color(theme.muted_foreground)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(look.needs_you)
                     .child("Needs you"),
             )
-            .child(chevron(grown).text_color(theme.muted_foreground))
+            .child(chevron(grown).text_color(look.text_3))
     }
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.

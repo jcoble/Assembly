@@ -1,9 +1,11 @@
-//! How the composer draws. One raised box with 12 px corners and no outline at rest, its edge lit by focus, a drag or a
-//! pending answer. At rest it's one slim line when the pane is wide enough: add, the draft, the controls. Content, a
+//! How the composer draws. One raised box in the look's composer colour, with its outline, 20 px corners and its
+//! shadow; the outline turns to the focus ring, the drag colour or amber for focus, a drag or a pending answer. At rest it's one slim line when the pane is wide enough: add, the draft, the controls. Content, a
 //! turn's first five seconds, a pending answer or a drag relaxes it into the draft on its own rows over the controls
 //! (capsule/shape.rs). Under the box sit the new session's sub-bar or the branch, and the hint line. Why something failed
 //! sits above the box, and the "/" list floats just above it.
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{COMPOSER_WIDTH, CORNER_COMPOSER, composer_shadow};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::composer as ids;
@@ -23,9 +25,14 @@ use crate::features::session::composer::attachment_card::AttachmentCard;
 use crate::features::session::composer::shape::{Facts, hint, look};
 use crate::features::session::composer::slash_list::SlashList;
 
-/// The box is 820 wide at most, with 22 on either side of it in a narrower pane.
-const COLUMN: Pixels = px(864.);
+/// The 22 on either side of the box in a narrower pane.
 const GUTTER: Pixels = px(22.);
+
+/// The composer's column: the box at the look's 724 at most (metrics::COMPOSER_WIDTH), with its gutter on either side.
+fn column() -> Pixels {
+    COMPOSER_WIDTH + GUTTER * 2.
+}
+
 /// Three lines of room once the box is open, so opening is visible.
 const OPEN_DRAFT: Pixels = px(63.);
 
@@ -139,6 +146,7 @@ impl Render for Composer {
         };
         let connecting = self.connecting.is_some();
         let theme = cx.theme();
+        let look = Look::of(cx);
         let offline = (self.offline.as_ref()).map(|_| {
             // The old app's quiet line over a saved remote chat (ConversationSurface.svelte): no more than that.
             SharedString::from(if self.still_offline {
@@ -154,12 +162,12 @@ impl Render for Composer {
         } else if locked {
             theme.warning
         } else {
-            transparent_black()
+            look.composer_border
         };
         let surface = if self.dragging {
             theme.drop_target
         } else {
-            theme.muted
+            look.composer
         };
         let inside = (if shape.one_line {
             h_flex()
@@ -210,10 +218,11 @@ impl Render for Composer {
         let capsule = v_flex()
             .children(self.answer.clone())
             .child(inside)
-            .rounded(px(12.))
+            .rounded(CORNER_COMPOSER)
             .bg(surface)
             .border_1()
             .border_color(edge)
+            .shadow(composer_shadow())
             .on_drag_move::<ExternalPaths>(cx.listener(
                 |composer, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                     let over = event.bounds.contains(&event.event.position);
@@ -234,14 +243,12 @@ impl Render for Composer {
             .px_1()
             .text_role(TextRole::Meta, cx)
             .text_color(theme.muted_foreground.opacity(0.78))
-            .child("Paste or drop images · type / for commands")
-            .when_some(self.meter.as_ref(), |line, meter| {
-                line.child("·").child(format!("{}% left", meter.left))
-            });
+            // What's left of the context window shows beside its ring (context_gauge.rs), not here.
+            .child("Paste or drop images · type / for commands");
         let column = v_flex()
             .relative()
             .w_full()
-            .max_w(COLUMN)
+            .max_w(column())
             .mx_auto()
             .px(GUTTER)
             .pt_2()

@@ -18,6 +18,8 @@ pub mod commit_box;
 pub mod commit_timeline;
 #[path = "panel/discard_dialog.rs"]
 pub mod discard_dialog;
+#[path = "panel/file_letter.rs"]
+pub mod file_letter;
 #[path = "git/git_action.rs"]
 pub mod git_action;
 #[path = "git/git_branches.rs"]
