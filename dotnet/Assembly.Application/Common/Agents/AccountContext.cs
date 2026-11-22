@@ -4,13 +4,13 @@ using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Common.Agents;
 
-/// <summary>Which provider configuration format supplies an effective auto-compact context limit.</summary>
+/// <summary>Which provider user-level configuration format supplies an effective auto-compact context limit.</summary>
 public enum ContextLimitSource
 {
     None,
-    /// <summary>JSON settings (<c>settings.json</c> / <c>settings.local.json</c>) with <c>autoCompactWindow</c> and non-widening effective window.</summary>
+    /// <summary>User <c>settings.json</c> with <c>autoCompactWindow</c> and non-widening effective window.</summary>
     JsonAutoCompactWindow,
-    /// <summary>TOML/JSON config (<c>config.toml</c> / <c>CODEX_CONFIG</c>) with <c>model_auto_compact_token_limit</c>.</summary>
+    /// <summary>User <c>config.toml</c> top-level <c>model_auto_compact_token_limit</c>.</summary>
     TomlAutoCompactLimit,
 }
 

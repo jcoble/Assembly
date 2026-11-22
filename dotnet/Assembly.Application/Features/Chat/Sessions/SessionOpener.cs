@@ -68,7 +68,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             validate?.Invoke();
             if (!configWarm) mcp?.ValidateOpen(sessionId, observation);
         }
-        var contextLimit = EffectiveContextLimit.Resolve(captured.Descriptor, captured.Environment, folder, launcher.ReadConfigFile);
+        var contextLimit = EffectiveContextLimit.Resolve(captured.Descriptor, captured.Environment, launcher.ReadConfigFile);
         string? acceptedNativeId = session.AcpSessionId;
         try
         {

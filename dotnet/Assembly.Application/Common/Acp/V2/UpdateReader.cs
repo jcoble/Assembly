@@ -270,10 +270,10 @@ public sealed class UpdateReader(ContextLimitPolicy? contextLimit = null)
             return usage;
 
         var effectiveSize = reportedSize;
-        if (policy.ConfiguredLimit is > 0 && effectiveSize > policy.ConfiguredLimit.Value)
-            effectiveSize = policy.ConfiguredLimit.Value;
+        if (policy.FixedLimit is > 0 && effectiveSize > policy.FixedLimit.Value)
+            effectiveSize = policy.FixedLimit.Value;
 
-        if (policy.ClampWidening)
+        if (policy.NeverWiden)
         {
             if (_observedContextModel is not null && usage.Model is not null
                 && !string.Equals(_observedContextModel, usage.Model, StringComparison.Ordinal))
