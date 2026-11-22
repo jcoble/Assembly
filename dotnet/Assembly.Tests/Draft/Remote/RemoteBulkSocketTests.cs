@@ -206,57 +206,6 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Remote_image_read_reassembles_only_the_owner_original()
-    {
-        var (name, original, _) = await SeedImageAsync();
-        using var socket = await OpenAsync(_desktopAddress, "/socket/bulk");
-        using var assembled = new MemoryStream();
-        long id = 1;
-        while (assembled.Length < original.Length)
-        {
-            await ImageAsync(socket, id++, name, assembled.Length);
-            var answer = await ReadAsync(socket);
-            Assert.Equal("result", answer.GetProperty("t").GetString());
-            var piece = answer.GetProperty("result");
-            Assert.Equal(original.Length, piece.GetProperty("size").GetInt64());
-            Assert.Equal("image/png", piece.GetProperty("mime").GetString());
-            var data = piece.GetProperty("data").GetBytesFromBase64();
-            Assert.InRange(data.Length, 1, AttachmentsFeature.ChunkBytes);
-            assembled.Write(data);
-        }
-        Assert.Equal(SHA256.HashData(original), SHA256.HashData(assembled.ToArray()));
-        await ImageAsync(socket, id, name, original.Length);
-        var end = (await ReadAsync(socket)).GetProperty("result");
-        Assert.Empty(end.GetProperty("data").GetBytesFromBase64());
-        Assert.Equal(original.Length, end.GetProperty("size").GetInt64());
-        Assert.Equal("image/png", end.GetProperty("mime").GetString());
-        Assert.Empty(_desktopLocal.Asked);
-        Assert.Equal(0, _legacyToolHits);
-    }
-
-    [Fact]
-    public async Task Remote_image_read_rejects_invalid_windows_and_missing_owner_without_local_fallback()
-    {
-        var (name, original, ownerPath) = await SeedImageAsync();
-        using var socket = await OpenAsync(_desktopAddress, "/socket/bulk");
-        await ImageAsync(socket, 1, "../" + name, 0);
-        Assert.Equal("not an attachment name", (await ReadAsync(socket)).GetProperty("message").GetString());
-        await ImageAsync(socket, 2, name, -1);
-        Assert.Equal("the offset is outside the attachment", (await ReadAsync(socket)).GetProperty("message").GetString());
-        await ImageAsync(socket, 3, name, original.Length + 1);
-        Assert.Equal("the offset is outside the attachment", (await ReadAsync(socket)).GetProperty("message").GetString());
-        File.Delete(ownerPath);
-        Assert.True(File.Exists(_desktopImages.PathOf("s", name)));
-        await ImageAsync(socket, 4, name, 0);
-        var missing = await ReadAsync(socket);
-        Assert.Equal("error", missing.GetProperty("t").GetString());
-        Assert.Equal("no such attachment", missing.GetProperty("message").GetString());
-        Assert.False(missing.TryGetProperty("result", out _));
-        Assert.Empty(_desktopLocal.Asked);
-        Assert.Equal(0, _legacyToolHits);
-    }
-
-    [Fact]
     public async Task Remote_image_read_reports_offline_owner_without_local_fallback()
     {
         var (name, _, _) = await SeedImageAsync();

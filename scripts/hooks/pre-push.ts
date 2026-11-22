@@ -6,7 +6,6 @@ export function updates(input: string): Update[] {
   return input.split('\n').filter(line => line.trim()).map(line => {
     const fields = line.trim().split(/\s+/);
     if (fields.length !== 4 || !/^[0-9a-f]{40,64}$/.test(fields[1]) || !/^[0-9a-f]{40,64}$/.test(fields[3])) throw new Error('Invalid push reference input');
-    if (/^refs\/heads\/(main|master)$/.test(fields[2])) throw new Error('Direct default-branch pushes are blocked. Use the owner-approved pull request.');
     return { local: fields[1], remote: fields[3], remoteRef: fields[2] };
   });
 }

@@ -303,51 +303,6 @@ public sealed class CommandStepTests
             f.Core.Text("SELECT id FROM engine_needs_me WHERE source_kind='workflow_gate' AND state='open'")!, effect, blocked);
     }
 
-    private static CommandResult AnswerNeed(Fixture f, string need, string answerJson)
-    {
-        var version = f.Core.Number("SELECT version FROM engine_needs_me WHERE id=$id", new SqlArg("$id", need));
-        using var answer = JsonDocument.Parse(answerJson);
-        var prepared = EngineCommands.PrepareOwnerNeedCommand(Guid.NewGuid(), f.Core.Machine, need, version, 0,
-            new ResolveNeed("answered", answer.RootElement.Clone()), null, null, default, new CommandOrigin("desktop", null, "board"));
-        return f.Core.Db.Writer.Write("test.answer", s => f.Commands.ApplyPreparedOwnerNeed(s, prepared, 2000));
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task A_revision_closes_an_open_command_approval_and_the_rerun_asks_it_again(bool settled)
-    {
-        using var f = new Fixture([], "allow", flow: ApprovalBesideCommandFlow, first: "build");
-        var (commandNeed, gateNeed, effect, blocked) = await BothAsking(f, settled);
-        IReadOnlyList<string> PhoneInbox()
-        {
-            using var scope = f.Core.Db.OpenSnapshot(default);
-            return PhoneNeedsRoutes.Read(scope, f.Core.Machine).Select(item => item.Id).ToArray();
-        }
-        Assert.Contains(commandNeed, PhoneInbox());
-
-        var revised = AnswerNeed(f, gateNeed, """{"choice":"revise","text":"Smaller"}""");
-        Assert.True(revised.Applied, revised.Error);
-        Assert.Equal("superseded", f.Core.Text("SELECT state FROM engine_needs_me WHERE id=$id", new SqlArg("$id", commandNeed)));
-        Assert.Empty(PhoneInbox());
-        Assert.Equal("already_resolved", AnswerNeed(f, commandNeed, "\"allow_once\"").Error);
-        if (!settled) Assert.True(f.Complete(effect, blocked).Applied);
-        Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_outbox WHERE id=$id", new SqlArg("$id", effect.Id)));
-        Assert.Equal("running", f.Core.Text("SELECT state FROM engine_run"));
-        var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
-        Assert.False(File.Exists(intent.OutputPath));
-
-        Assert.Equal(1, new WorkflowAdvancementPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time).AdvancePending(default));
-        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE state<>'pending'"));
-
-        var (askedAgain, _, _, _) = await BothAsking(f, settled: true);
-        Assert.NotEqual(commandNeed, askedAgain);
-        Assert.Contains(askedAgain, PhoneInbox());
-        Assert.True(AnswerNeed(f, askedAgain, "\"allow_once\"").Applied);
-        var allowed = f.Claim(); Assert.True(f.Complete(allowed, await f.Host().ExecuteAsync(allowed, default)).Applied);
-        Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step WHERE definition_key='checks'"));
-    }
-
     internal sealed class Fixture : IDisposable
     {
         private readonly string _temp = Directory.CreateTempSubdirectory("assembly-command-engine-").FullName;

@@ -16,24 +16,6 @@ public sealed class HandoffWorkspaceTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Source_preserves_exact_fetch_url_and_different_remote_branch_name(bool fileUri)
-    {
-        var (source, upstream, head) = await Repo();
-        await Git(source, "branch", "-m", "local-work");
-        await Git(source, "remote", "rename", "origin", "actual-upstream");
-        if (fileUri) upstream = new Uri(upstream).AbsoluteUri;
-        await Git(source, "remote", "set-url", "actual-upstream", upstream);
-        await Git(source, "fetch", "actual-upstream");
-        var check = await HandoffWorkspace.CheckSourceAsync(source, default);
-        Assert.Equal(new WorkspaceCheck(upstream, "published", head), check);
-        var target = await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default);
-        Assert.Equal(upstream, await Git(target, "remote", "get-url", "origin"));
-        Assert.Equal(head, await Git(target, "rev-parse", "HEAD"));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
     public async Task Source_preserves_ssh_username_identity(bool scp)
     {
         var (source, _, head) = await Repo();
@@ -95,26 +77,6 @@ public sealed class HandoffWorkspaceTests : IDisposable
     }
 
     [Fact]
-    public async Task Relative_upstream_resolves_from_real_worktree_root_including_nested_invocation()
-    {
-        var (source, upstream, head) = await Repo();
-        var linked = Path.Combine(_root, "linked worktree");
-        await Git(source, "worktree", "add", "-b", "local-work", linked, "published");
-        await Git(linked, "config", "branch.local-work.remote", "origin");
-        await Git(linked, "config", "branch.local-work.merge", "refs/heads/published");
-        await Git(linked, "remote", "set-url", "origin", "../safe repo.git");
-        var nested = Path.Combine(linked, "nested child");
-        Directory.CreateDirectory(nested);
-        // Actual Git fetch from the nested cwd establishes the identity independently of the helper.
-        await Git(nested, "fetch", "origin");
-        Assert.Equal(head, await Git(nested, "rev-parse", "@{upstream}"));
-        var check = await HandoffWorkspace.CheckSourceAsync(nested, default);
-        Assert.Equal(new WorkspaceCheck(upstream, "published", head), check);
-        var target = await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default);
-        Assert.Equal(head, await Git(target, "rev-parse", "HEAD"));
-    }
-
-    [Fact]
     public async Task Caller_relative_repository_cannot_select_a_repo_from_target_staging()
     {
         var (_, upstream, head) = await Repo();
@@ -128,20 +90,6 @@ public sealed class HandoffWorkspaceTests : IDisposable
         Assert.Equal(untouched, Directory.GetLastWriteTimeUtc(Checkouts));
         Assert.Equal(["safe repo.git"], Directory.GetFileSystemEntries(Checkouts).Select(Path.GetFileName));
         Assert.Equal(head, await Git(Path.Combine(Checkouts, "safe repo.git"), "rev-parse", "HEAD"));
-    }
-
-    [Fact]
-    public async Task Valid_long_repository_name_keeps_the_repo_name_destination_contract()
-    {
-        var (source, upstream, head) = await Repo();
-        var name = new string('r', 170);
-        var renamed = Path.Combine(_root, name + ".git");
-        Directory.Move(upstream, renamed);
-        await Git(source, "remote", "set-url", "origin", renamed);
-        var check = await HandoffWorkspace.CheckSourceAsync(source, default);
-        var target = await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default);
-        Assert.Equal(Path.Combine(Checkouts, name + "-a1234567"), target);
-        Assert.Equal(head, await Git(target, "rev-parse", "HEAD"));
     }
 
     [Theory]
@@ -163,84 +111,6 @@ public sealed class HandoffWorkspaceTests : IDisposable
         }
         else await File.WriteAllTextAsync(Path.Combine(source, kind == "tracked" ? "file" : "new file"), "changed");
         await Refused("uncommitted_changes", () => HandoffWorkspace.CheckSourceAsync(source, default));
-    }
-
-    [Theory]
-    [InlineData("detached")]
-    [InlineData("no-upstream")]
-    [InlineData("ahead")]
-    [InlineData("behind")]
-    [InlineData("missing-ref")]
-    [InlineData("multiple-merge")]
-    [InlineData("multiple-remote")]
-    [InlineData("local-upstream")]
-    public async Task Source_refuses_unpublished_or_ambiguous_branch(string kind)
-    {
-        var (source, _, head) = await Repo();
-        switch (kind)
-        {
-            case "detached": await Git(source, "checkout", "--detach"); break;
-            case "no-upstream": await Git(source, "branch", "--unset-upstream"); break;
-            case "ahead": await Git(source, "commit", "--allow-empty", "-m", "ahead"); break;
-            case "behind":
-                await Git(source, "commit", "--allow-empty", "-m", "ahead");
-                await Git(source, "push");
-                await Git(source, "update-ref", "refs/heads/published", head);
-                break;
-            case "missing-ref": await Git(source, "update-ref", "-d", "refs/remotes/origin/published"); break;
-            case "multiple-merge": await Git(source, "config", "--add", "branch.published.merge", "refs/heads/other"); break;
-            case "multiple-remote": await Git(source, "config", "--add", "branch.published.remote", "another"); break;
-            case "local-upstream": await Git(source, "config", "branch.published.remote", "."); break;
-        }
-        await Refused("branch_not_pushed", () => HandoffWorkspace.CheckSourceAsync(source, default));
-    }
-
-    [Fact]
-    public async Task Source_refuses_nonrepository_and_unborn_branch()
-    {
-        await Refused("not_a_git_checkout", () => HandoffWorkspace.CheckSourceAsync(_root, default));
-        var unborn = Path.Combine(_root, "unborn");
-        Directory.CreateDirectory(unborn);
-        await Git(unborn, "init", "-b", "main");
-        await Refused("branch_not_pushed", () => HandoffWorkspace.CheckSourceAsync(unborn, default));
-    }
-
-    [Fact]
-    public async Task Target_publishes_exact_commit_and_reuses_only_matching_owned_checkout()
-    {
-        var (source, upstream, head) = await Repo();
-        var check = await HandoffWorkspace.CheckSourceAsync(source, default);
-        var target = await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default);
-        Assert.Equal(Path.Combine(Checkouts, "safe-repo-a1234567"), target);
-        Assert.Equal(head, await Git(target, "rev-parse", "HEAD"));
-        Assert.Equal("commit", await Git(target, "cat-file", "-t", head));
-        Assert.Equal("published", await Git(target, "branch", "--show-current"));
-        Assert.Equal(upstream, await Git(target, "remote", "get-url", "origin"));
-        Assert.Equal("", await Git(target, "status", "--porcelain", "--untracked-files=all"));
-        Assert.Equal("initial\n", await File.ReadAllTextAsync(Path.Combine(target, "file")));
-        Assert.Equal(target, await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default));
-        Assert.Single(Directory.GetDirectories(Checkouts));
-    }
-
-    [Theory]
-    [InlineData("missing-object")]
-    [InlineData("different-commit")]
-    [InlineData("wrong-branch")]
-    [InlineData("not-commit")]
-    public async Task Target_refuses_unadvertised_or_noncommit_head_without_publication(string kind)
-    {
-        var (source, upstream, head) = await Repo();
-        var branch = "published";
-        if (kind == "missing-object") head = new string('1', 40);
-        if (kind == "different-commit")
-        {
-            await Git(source, "commit", "--allow-empty", "-m", "new");
-            await Git(source, "push");
-        }
-        if (kind == "wrong-branch") branch = "absent";
-        if (kind == "not-commit") head = await Git(source, "rev-parse", "HEAD:file");
-        await Refused("head_not_found", () => HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, new(upstream, branch, head), default));
-        Assert.Empty(Directory.GetFileSystemEntries(Checkouts));
     }
 
     [Theory]

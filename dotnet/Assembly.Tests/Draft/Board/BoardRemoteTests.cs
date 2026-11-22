@@ -23,7 +23,7 @@ using Assembly.Application.Features.Workflows.Contracts;
 
 namespace Assembly.Tests.Draft.Board;
 
-public sealed class BoardRemoteTests
+public sealed class BoardRemoteTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     // Pins: board#6
     [Fact]
@@ -94,9 +94,11 @@ public sealed class BoardRemoteTests
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         endpoint.Listening(address);
         var home = Directory.CreateTempSubdirectory("assembly-board-remote-").FullName;
+        // The desktops log goes to the tests output, so a failure shows whether its link to the remote dropped.
+        var log = new SharedLog();
         try
         {
-            await using var desktop = await DesktopBackend.StartAsync(home, "desktop-test", 0, new FakeLauncher(), TextWriter.Null,
+            await using var desktop = await DesktopBackend.StartAsync(home, "desktop-test", 0, new FakeLauncher(), log,
                 new RemoteConfig("Workbox Test", address, "board-test"));
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(desktop.Address) { Scheme = "ws", Path = "/socket" }.Uri, CancellationToken.None);
@@ -131,7 +133,11 @@ public sealed class BoardRemoteTests
             Assert.Contains(remoteRows, row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "started");
             Assert.Equal(remoteRows.Select(RowWire.ToJson), copied.RowsAfter(sessionId, 0).Select(RowWire.ToJson));
         }
-        finally { Directory.Delete(home, recursive: true); }
+        finally
+        {
+            output.WriteLine(log.ToString());
+            Directory.Delete(home, recursive: true);
+        }
     }
 
     [Fact]

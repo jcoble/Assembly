@@ -20,13 +20,13 @@ function setup() {
   const capture = join(directory, 'node-argv');
   const sshCapture = join(directory, 'ssh-argv');
   mkdirSync(join(local, 'dotnet/scripts'), { recursive: true });
-  mkdirSync(join(local, 'scripts/features'), { recursive: true });
+  mkdirSync(join(local, 'scripts/drive'), { recursive: true });
   mkdirSync(join(remoteHome, '.local/bin'), { recursive: true });
   mkdirSync(bin);
   writeFileSync(join(local, 'dotnet/scripts/workbox.sh'), source, { mode: 0o755 });
   // Source-only fixture: this stub prevents any lane data or service selection.
   writeFileSync(join(local, 'scripts/lane-env.sh'), 'LANE_NAME=fixture\nBOX_PORT=19999\nBOX_UNIT=fixture\nBOX_DATA=fixture\n');
-  for (const name of ['dotnet/scripts/row-log.ts', 'scripts/features/live-rows.ts', 'scripts/features/socket.ts'])
+  for (const name of ['dotnet/scripts/row-log.ts', 'scripts/drive/live-rows.ts', 'scripts/drive/socket.ts'])
     writeFileSync(join(local, name), '// fixture source\n');
   git(local, 'init', '-q', '-b', branch);
   git(local, 'add', '.'); git(local, 'commit', '-q', '-m', 'fixture');
@@ -75,8 +75,8 @@ for (const mode of ['absent', 'stale', 'dirty-remote', 'missing-source', 'dirty-
     try {
       if (mode === 'absent') rmSync(f.remote, { recursive: true });
       if (mode === 'stale') git(f.remote, 'commit', '--allow-empty', '-q', '-m', 'stale');
-      if (mode === 'dirty-remote') writeFileSync(join(f.remote, 'scripts/features/socket.ts'), '// changed\n');
-      if (mode === 'missing-source') rmSync(join(f.remote, 'scripts/features/live-rows.ts'));
+      if (mode === 'dirty-remote') writeFileSync(join(f.remote, 'scripts/drive/socket.ts'), '// changed\n');
+      if (mode === 'missing-source') rmSync(join(f.remote, 'scripts/drive/live-rows.ts'));
       if (mode === 'dirty-local') writeFileSync(join(f.local, 'dotnet/scripts/row-log.ts'), '// changed\n');
       if (mode === 'detached') git(f.local, 'checkout', '--detach', '-q');
       const checked = f.run(['row-log', 'latest']);

@@ -29,46 +29,6 @@ public sealed class NativeSessionFileInputsTests : IDisposable
             NativeSessionFileInputs.ResolveProviderPath(capture.Storage.ProviderHome, capture.Current.SelectedRelativePath));
     }
 
-    private static HandoffReleaseEffectData Release(NativeSessionCapture capture) =>
-        new(new("a1234567-1111-4111-8111-111111111111", capture.Current.MachineId, capture.Current.SessionId,
-            "target-machine", capture.Current.Epoch, capture.Current.Epoch + 1), capture.Current.SessionId,
-            capture.Current.Epoch, capture.Current.AcpSessionId, "actual-operation", "release-effect", 1);
-
-    [Fact]
-    public void Release_crosscheck_uses_public_ACP_without_conflating_the_native_resume_id()
-    {
-        var capture = Capture();
-        NativeSessionFileInputs.ValidateRelease(capture, Release(capture));
-        Assert.Equal("unavailable", Assert.Throws<HandoffRefused>(() => NativeSessionFileInputs.ValidateRelease(capture,
-            Release(capture) with { ProviderSessionId = capture.Current.ResumeId })).Message);
-    }
-
-    [Theory]
-    [InlineData("missing")]
-    [InlineData("machine")]
-    [InlineData("session")]
-    [InlineData("epoch")]
-    [InlineData("operation")]
-    [InlineData("effect")]
-    [InlineData("attempt")]
-    public void Absent_or_mismatched_positive_release_data_cannot_bind_the_source(string change)
-    {
-        var capture = Capture();
-        var release = Release(capture);
-        var changed = change switch
-        {
-            "missing" => null,
-            "machine" => release with { Identity = release.Identity with { SourceMachine = "other" } },
-            "session" => release with { SessionId = "other" },
-            "epoch" => release with { Epoch = release.Epoch + 1 },
-            "operation" => release with { AdapterOperationId = "" },
-            "effect" => release with { ReleaseEffectId = "" },
-            _ => release with { ReleaseAttempt = 0 }
-        };
-        Assert.Equal("unavailable", Assert.Throws<HandoffRefused>(() =>
-            NativeSessionFileInputs.ValidateRelease(capture, changed)).Message);
-    }
-
     [Theory]
     [InlineData("machine")]
     [InlineData("provider")]

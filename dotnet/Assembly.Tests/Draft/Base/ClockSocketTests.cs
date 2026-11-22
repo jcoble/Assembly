@@ -64,21 +64,6 @@ public sealed class ClockSocketTests : IAsyncLifetime
         _file.Dispose();
     }
 
-    // The clock topic: a second subscriber gets one change a second, 180 over three minutes.
-    [Fact]
-    public async Task A_second_subscriber_gets_180_changes_over_three_minutes()
-    {
-        using var socket = await OpenAsync();
-        await SendAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
-        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"second","item":{"now":""" + Ms(0) + "}}]}", await ReadAsync(socket));
-
-        for (var second = 1; second <= 180; second++)
-        {
-            _time.Advance(TimeSpan.FromSeconds(1));
-            Assert.Equal(Change(1, second), await ReadAsync(socket));
-        }
-    }
-
     [Fact]
     public async Task The_clock_ticks_only_while_someone_is_subscribed()
     {

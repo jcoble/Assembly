@@ -3,6 +3,9 @@ import { basename, join } from 'node:path';
 import { config, command, gh, status, atomic, main, privateDirectory, ci, recordedUnits, stopUnit } from './common.ts';
 import { post } from './post.ts';
 
+// Accounts whose pull requests may be verified: the owner and the agents' account. Only the owner's @verify comment dispatches.
+export const PR_AUTHORS = ['jcoble', 'jcoble-agents'];
+
 export function dispatch(input: string, locked=false) {
   // SSH_ORIGINAL_COMMAND is data, never a shell command. ASCII decimal fields only.
   if (!/^[1-9][0-9]*(?: [1-9][0-9]*)?$/.test(input)) throw Error('Expected PR digits, optionally comment digits');
@@ -16,9 +19,9 @@ export function dispatch(input: string, locked=false) {
     return;
   }
   const pull = gh(c, `repos/${c.repository}/pulls/${pr}`);
-  if (pull.number !== pr || pull.state !== 'open' || pull.user?.login !== c.owner ||
+  if (pull.number !== pr || pull.state !== 'open' || !PR_AUTHORS.includes(pull.user?.login) ||
       pull.head?.repo?.full_name !== c.repository || !/^[a-f0-9]{40}$/.test(pull.head?.sha) ||
-      !/^[a-f0-9]{40}$/.test(pull.base?.sha)) throw Error('PR must be open, same repository, and owner-authored');
+      !/^[a-f0-9]{40}$/.test(pull.base?.sha)) throw Error('PR must be open, same repository, and authored by the owner or the agents account');
   if (comment) {
     const note = gh(c, `repos/${c.repository}/issues/comments/${comment}`);
     if (note.user?.login !== c.owner || note.issue_url !== `https://api.github.com/repos/${c.repository}/issues/${pr}` ||

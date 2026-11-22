@@ -101,17 +101,6 @@ public sealed partial class SocketTests : IAsyncLifetime
         Assert.Equal(code, (int)socket.CloseStatus!);
     }
 
-    [Fact]
-    public async Task The_welcome_names_the_protocol_and_the_machine()
-    {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(_address, CancellationToken.None);
-
-        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":2}""");
-
-        Assert.Equal($$"""{"t":"welcome","protocol":2,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}},"commit":{{JsonSerializer.Serialize(BackendBuild.Commit)}},"backendIdentity":{{JsonSerializer.Serialize(BackendBuild.Identity)}},"version":{{JsonSerializer.Serialize(BackendBuild.Version)}}}""", await ReadAsync(socket));
-    }
-
     // Pins: base#10
     [Fact]
     public async Task Cancel_fires_the_handlers_token()

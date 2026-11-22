@@ -56,6 +56,42 @@ for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake committe
   await assert.rejects(fs.stat(join(secondLane,'prepared-backend.json')),{code:'ENOENT'});
 });
 
+test('going back to a commit deployed before reuses its release: no build, no failure',async t=>{
+  const root=await fs.mkdtemp(join(tmpdir(),'assembly-redeploy-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const source=join(root,'source'),lane=join(root,'lane'),bin=join(root,'bin'),calls=join(root,'calls');
+  for(const directory of [source,lane,bin])await fs.mkdir(directory);
+  const git=(...args:string[])=>exec('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid',...args],{cwd:source});
+  const row=join(source,'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs');
+  for(const [name,content] of Object.entries({'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>','dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 2;'}))
+    {await fs.mkdir(join(source,name,'..'),{recursive:true});await fs.writeFile(join(source,name),content)}
+  await fs.mkdir(join(row,'..'),{recursive:true});await fs.writeFile(row,'const int FormatVersion = 5;');
+  await git('init','-q');await git('add','.');await git('commit','-qm','first');
+  const first=(await git('rev-parse','HEAD')).stdout.trim();
+  await fs.appendFile(row,'\n// second');await git('commit','-qam','second');
+  const second=(await git('rev-parse','HEAD')).stdout.trim();
+  await fs.writeFile(join(bin,'dotnet'),`#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+const out=process.argv[process.argv.indexOf('-o')+1];
+fs.appendFileSync(process.env.BUILD_CALLS,'build\\n');fs.mkdirSync(out,{recursive:true});
+for(const [file,content] of Object.entries({'Assembly.Remote.dll':'fake backend','Assembly.Remote.deps.json':'{}','Assembly.Remote.runtimeconfig.json':JSON.stringify({runtimeOptions:{frameworks:[{name:'Microsoft.NETCore.App',version:'10.0.0'}]}})}))fs.writeFileSync(path.join(out,file),content);
+`,{mode:0o755});
+  const helper=join(root,'run.ts');
+  await fs.writeFile(helper,`import {prepareBackend} from ${JSON.stringify(new URL('./dev-remote-build.ts',import.meta.url).href)};\nconsole.log('PREPARED '+JSON.stringify(await prepareBackend(${JSON.stringify(lane)},JSON.parse(process.env.REQUEST),undefined,new AbortController().signal)));`);
+  const deploy=async(commit:string)=>{
+    await git('checkout','-q',commit);
+    const request={identity:await backendIdentity(source,commit),commit};
+    const run=await exec(process.execPath,[helper],{cwd:source,env:{...process.env,PATH:bin+':'+process.env.PATH,BUILD_CALLS:calls,REQUEST:JSON.stringify(request)}});
+    return JSON.parse(run.stdout.split('\n').find(line=>line.startsWith('PREPARED '))!.slice(9));
+  };
+  const before=await deploy(first);
+  await deploy(second);
+  assert.equal(await fs.readFile(calls,'utf8'),'build\nbuild\n');
+  assert.deepEqual(await deploy(first),before);
+  assert.equal(await fs.readFile(calls,'utf8'),'build\nbuild\n');
+});
+
 test('a verified deploy keeps the running and replaced releases and leaves anything else in bin alone',async t=>{
   const root=await fs.mkdtemp(join(tmpdir(),'assembly-releases-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));

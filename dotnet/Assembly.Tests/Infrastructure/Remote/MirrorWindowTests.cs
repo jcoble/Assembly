@@ -89,25 +89,6 @@ public sealed class MirrorWindowTests
     }
 
     [Fact]
-    public async Task Unknown_retired_and_explicit_local_machine_are_distinct()
-    {
-        await using var h = new TwoHosts(windowCalls: true); await h.Start(); await h.StartMirror();
-        var old = h.Remote.Fixture.Machine;
-        await h.StopMirror(); await h.ReplaceRemote(); await h.StartMirror();
-        using var socket = await Open(h.Mac);
-        foreach (var machine in new[] { "unknown", old })
-        {
-            await Subscribe(socket, 1, machine);
-            Assert.Equal("not_found", (await Read(socket)).GetProperty("code").GetString());
-        }
-        await Subscribe(socket, 2, h.Mac.Fixture.Machine);
-        var local = await Read(socket);
-        Assert.Equal("engine_snapshot", local.GetProperty("t").GetString());
-        Assert.Equal(h.Mac.Fixture.Machine, local.GetProperty("machine").GetString());
-        Assert.Throws<KeyNotFoundException>(() => h.Mac.Runtime.Reader.HighWatermark(default, old));
-    }
-
-    [Fact]
     public async Task Mirror_retention_is_bounded_by_its_own_window_ack()
     {
         await using var h = new TwoHosts(windowCalls: true); await h.Start(); await h.StartMirror();

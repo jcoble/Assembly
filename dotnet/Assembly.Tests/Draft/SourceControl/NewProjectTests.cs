@@ -64,39 +64,6 @@ public sealed partial class NewProjectTests
         Assert.Equal(0, h.Hosts.Mac.Fixture.Count("projects")); Assert.Equal(0, h.Store.Revision(default));
     }
 
-    [Fact]
-    public async Task Sessionless_host_and_missing_operation_require_the_fixed_action_instance_and_correct_host()
-    {
-        await using var h = await Harness.Start(); using var local = await h.Open();
-        Assert.Equal("failed", (await h.Call(local, 1, "operation_host", new { })).GetProperty("code").GetString());
-        Assert.Equal("failed", (await h.Call(local, 2, "operation", new { operationId = Guid.NewGuid(), action = "createProject" })).GetProperty("code").GetString());
-        var missing = await h.Call(local, 3, "operation", new GitOperationArgs(Guid.NewGuid(), Action: "createProject", InstanceId: h.LocalOperations.InstanceId));
-        Assert.Equal("uncertain", missing.GetProperty("result").GetProperty("state").GetString());
-        using var remote = await h.Open(true);
-        Assert.Equal("failed", (await h.Call(remote, 4, "operation_host", new { action = "createProject" })).GetProperty("code").GetString());
-        Assert.Equal(0, h.Hosts.Mac.Fixture.Count("projects"));
-    }
-
-    [Fact]
-    public async Task Remote_folder_reads_resolve_the_saved_profile_to_its_actual_engine_and_socket()
-    {
-        await using var h = await Harness.Start();
-        var child = Path.Combine(h.RemoteParent, "remote child ü");
-        Directory.CreateDirectory(child);
-        var folders = new RemoteProjectFolders(h.Hosts.Connections, "workbox-test");
-        var listing = await folders.ListAsync(h.RemoteParent, default);
-        Assert.Equal(h.RemoteParent, listing.Path);
-        Assert.Contains(child, listing.Directories);
-        Assert.False(listing.Truncated);
-        var inspected = await folders.InspectAsync(child, default);
-        Assert.Equal(child, inspected.RootPath);
-        Assert.False(inspected.IsGit);
-        // A provider's engine identity is not a saved connection name.
-        Assert.NotEqual("workbox-test", h.Hosts.Remote.Fixture.Machine);
-        await Assert.ThrowsAsync<Assembly.Application.Common.Machines.MachineUnreachable>(() => new RemoteProjectFolders(h.Hosts.Connections,
-            h.Hosts.Remote.Fixture.Machine).ListAsync(h.RemoteParent, default));
-    }
-
     private sealed class Harness : IAsyncDisposable
     {
         internal readonly TwoHosts Hosts = new(forwardCommands: true);

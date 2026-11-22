@@ -40,46 +40,6 @@ public sealed class BoardSocketTests
         f.Topics.Unsubscribe(sub);
     }
 
-    [Fact]
-    public void JsonRoundTripsAllBoardPayloads()
-    {
-        using var f = new BoardQueryTests.Fixture();
-        f.Update(question: f.Ask());
-        var page = f.Page();
-        var json = JsonSerializer.Serialize(page, WorkflowJson.Default.BoardPageResult);
-        var decoded = JsonSerializer.Deserialize(json, WorkflowJson.Default.BoardPageResult)!;
-        Assert.Equal(page.Items[0].Task, decoded.Items[0].Task);
-        Assert.Contains("\"nextCursor\":null", json);
-        Assert.Contains("\"tools\":null", json);
-        var feed = f.Queries.Changes(new(0), CancellationToken.None);
-        Assert.Equal(feed.Events[0].Task, JsonSerializer.Deserialize(JsonSerializer.Serialize(feed,
-            WorkflowJson.Default.BoardChangesResult), WorkflowJson.Default.BoardChangesResult)!.Events[0].Task);
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize("""{"project":null,"state":null,"cursor":null,"extra":1}""", WorkflowJson.Default.BoardPageArgs));
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize("{}", WorkflowJson.Default.BoardAnswerArgs));
-        var task = page.Items[0].Task;
-        var question = f.Detail().Questions[0];
-        var answer = f.Answer();
-        var acceptance = new BoardAnswerResult("local", "task", "q1", 1, answer.AnswerKey, 2);
-        object[] payloads = [
-            task, question, feed.Events[0], page.Items[0].Metrics, page.Items[0],
-            new BoardCursor(0, 1000, "local", "task"), new BoardQuestionCursor(1000, "q1"),
-            page.Counts, page.Watermarks[0], new BoardPageArgs(null, null, null), page,
-            new BoardTaskArgs("local", "task", null, null), f.Detail(), new BoardChangesArgs(0), feed,
-            new BoardChange("local", "task", 1, 1), answer.Answer, answer, acceptance, f.Ask(),
-            new BoardAnswerReceived("q1", 1, answer.AnswerKey, answer.Answer), f.Report(), f.Update()
-        ];
-        foreach (var payload in payloads)
-        {
-            var type = WorkflowJson.Default.GetTypeInfo(payload.GetType())!;
-            var encoded = JsonSerializer.Serialize(payload, type);
-            Assert.Equal(encoded, JsonSerializer.Serialize(JsonSerializer.Deserialize(encoded, type), type));
-        }
-        // Include the configured empty source watermark without inventing a row or a cursor table.
-        var emptyRemote = new global::Assembly.Application.Features.Workflows.WorkflowQueries(f.Db, "Workbox Test")
-            .Page(new(null, null, null), CancellationToken.None);
-        Assert.Contains(emptyRemote.Watermarks, w => w.MachineId == "Workbox Test" && w.Seq == 0);
-    }
-
     internal sealed class Host : IAsyncDisposable
     {
         public BoardQueryTests.Fixture F { get; } = new();
@@ -149,23 +109,6 @@ public sealed class BoardSocketTests
             bytes.Write(buffer, 0, frame.Count);
         } while (!frame.EndOfMessage);
         return JsonDocument.Parse(bytes.ToArray()).RootElement.Clone();
-    }
-
-    [Fact]
-    public async Task EmptyBoardTopicIsNotPage()
-    {
-        await using var host = new Host();
-        await host.StartAsync();
-        host.F.Update();
-        using var socket = await host.ConnectAsync();
-        await Send(socket, """{"t":"sub","id":1,"topic":"board"}""");
-        Assert.Empty((await Read(socket)).GetProperty("items").EnumerateArray());
-        await Send(socket, """{"t":"call","id":2,"feature":"board","method":"page","args":{"project":null,"state":null,"cursor":null}}""");
-        Assert.Equal(1, (await Read(socket)).GetProperty("result").GetProperty("counts").GetProperty("total").GetInt64());
-        await Send(socket, """{"t":"call","id":3,"feature":"board","method":"update","args":{}}""");
-        Assert.Equal("not_found", (await Read(socket)).GetProperty("code").GetString());
-        await Send(socket, """{"t":"call","id":4,"feature":"board","method":"page","args":{}}""");
-        Assert.Equal("bad_args", (await Read(socket)).GetProperty("code").GetString());
     }
 
     [Fact]

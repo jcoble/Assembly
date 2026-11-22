@@ -421,3 +421,48 @@ grep -Fq 'no valid cached bundle exists' "$tmp/legacy.err"
 [[ "$(sha256sum "$tmp/legacy-agents.json" | cut -d' ' -f1)" == "$legacy_descriptor" ]]
 [[ "$(cd "$legacy" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" == "$legacy_tree" ]]
 echo "ok   an offline upgrade over a launcher-era cache fails and keeps its descriptor and bundle"
+
+# A profile from before the stock adapters: its adapters are gone and its Codex entry still has the patched adapter's AIR field.
+old="$tmp/old-profile"
+mkdir -p "$old"
+python3 -I - "$old/agents.json" <<'PY'
+import json, sys
+gone = "/gone/adapters/node_modules/@agentclientprotocol/"
+json.dump([
+    {"id": "claude", "name": "Claude Code", "command": "/gone/node", "args": [gone + "claude-agent-acp/dist/index.js"], "env": {}, "cli": "/owner/claude"},
+    {"id": "codex", "name": "Codex", "command": "/gone/node", "args": [gone + "codex-acp/dist/index.js"], "env": {}, "air": ["sessionIndex", "asyncTasks"], "cli": "/owner/codex"},
+], open(sys.argv[1], "w"))
+PY
+if ! env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" \
+  bash "$here/../dotnet/scripts/agents-file.sh" "$old/adapters" "$old/agents.json" "$tmp/releases/assembly-providers-202-1" 2>"$old/err"; then
+  echo "FAIL an old profile's agents file was not upgraded: $(cat "$old/err")"; exit 1
+fi
+python3 -I - "$old/agents.json" "$old/adapters" <<'PY'
+import json, os, sys
+agents = {agent["id"]: agent for agent in json.load(open(sys.argv[1]))}
+bundles = os.path.realpath(sys.argv[2]) + "/bundles/"
+for name in ("claude", "codex"):
+    entry = agents[name]["args"][0]
+    assert entry.startswith(bundles) and os.path.isfile(entry), entry
+    assert os.path.isfile(agents[name]["command"]), agents[name]["command"]
+    assert agents[name]["cli"] == "/owner/" + name, agents[name]
+assert "air" not in agents["codex"], agents["codex"]
+PY
+echo "ok   an old profile whose adapters are gone and whose Codex entry has AIR is upgraded, and AIR is dropped"
+
+# The launch's repair request over that upgraded file, now with an owner's own entry whose adapter is gone: the two
+# entries the installer writes can start, so nothing is fetched and the file is left exactly as it is.
+python3 -I - "$old/agents.json" <<'PY'
+import json, sys
+path = sys.argv[1]; agents = json.load(open(path))
+agents.append({"id": "second", "name": "Second", "command": agents[0]["command"], "args": ["/gone/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"], "env": {}})
+json.dump(agents, open(path, "w"))
+PY
+repair_descriptor=$(sha256sum "$old/agents.json" | cut -d' ' -f1)
+if ! env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" FAKE_ASSET_ROOT="$tmp/releases" \
+  FAKE_CURL_CALLS="$old/curl-calls.jsonl" ASSEMBLY_REPAIR_ONLY=1 bash "$here/../dotnet/scripts/agents-file.sh" "$old/adapters" "$old/agents.json" 2>"$old/err"; then
+  echo "FAIL a repair with nothing of the installer's to repair did not succeed: $(cat "$old/err")"; exit 1
+fi
+[[ ! -e "$old/curl-calls.jsonl" ]] || { echo "FAIL a repair with nothing to repair read the network: $(cat "$old/curl-calls.jsonl")"; exit 1; }
+[[ "$(sha256sum "$old/agents.json" | cut -d' ' -f1)" == "$repair_descriptor" ]]
+echo "ok   a repair request fetches nothing and changes nothing when only an owner's own entry is missing its adapter"

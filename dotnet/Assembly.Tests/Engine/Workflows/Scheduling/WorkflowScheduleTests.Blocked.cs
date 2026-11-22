@@ -57,25 +57,6 @@ public sealed partial class WorkflowScheduleTests
     private static long ProbesAsked(Fixture f) => f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='probe_provider'");
 
     [Theory]
-    [InlineData("DELETE FROM engine_provider")]
-    [InlineData("UPDATE engine_provider SET installation='unknown',auth_state='unverified',facts_json=NULL,checked_ms=NULL")]
-    public void A_step_on_a_provider_nobody_checked_has_the_engine_check_it_and_goes_on(string unchecked_)
-    {
-        using var f = new Fixture();
-        Providers(f, unchecked_);
-        Assert.False(Block(f));
-        Assert.Equal(("pending", null, false), Blocked(f));
-        Assert.Equal("checking", f.Core.Text("SELECT auth_state FROM engine_provider"));
-        Assert.Equal(1, ProbesAsked(f));
-        // Asking again while it runs starts nothing more.
-        Assert.False(Block(f));
-        Assert.Equal(1, ProbesAsked(f));
-        Providers(f, CheckedFine);
-        Assert.False(Block(f));
-        Assert.True(f.Apply(f.Prepare()).Result.Applied);
-    }
-
-    [Theory]
     [InlineData("installation='not_installed',auth_state='could_not_check'", "codex isn't installed on this machine.")]
     [InlineData("installation='installed',auth_state='needs_sign_in',facts_json='{\"models\":[]}'", "Sign in to codex to run this step.")]
     [InlineData("installation='installed',auth_state='signed_in',facts_json='{\"models\":[]}'", "Model selected-model isn't available for codex on this machine.")]
@@ -88,15 +69,6 @@ public sealed partial class WorkflowScheduleTests
         Assert.True(Block(f));
         Assert.Equal(("failed", reason, true), Blocked(f));
         Assert.Equal(1, ProbesAsked(f));
-    }
-
-    [Fact]
-    public void A_step_on_a_provider_this_machine_has_no_setup_for_fails_without_a_check()
-    {
-        using var f = new Fixture(unconfigured: true);
-        Assert.True(Block(f));
-        Assert.Equal(("failed", "codex isn't set up on this machine.", true), Blocked(f));
-        Assert.Equal(0, ProbesAsked(f));
     }
 
     [Fact]

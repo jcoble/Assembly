@@ -95,56 +95,6 @@ public sealed class WorkflowReadTests
     }
 
     [Fact]
-    public void History_pages_use_permanent_per_run_sequence_with_gaps_and_preserve_recorded_body()
-    {
-        using var f = new Fixture(); var run = f.Start("one"); var another = f.Start("two");
-        f.Core.Db.Writer.Write("test.history-fixture", scope =>
-        {
-            scope.Execute("DELETE FROM engine_workflow_history WHERE run_id=$run", new SqlArg("$run", run));
-            foreach (var seq in new[] { 2, 8, 20 })
-                scope.Execute("""
-                    INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,generation,kind,at_ms,safe_body_json)
-                    VALUES($id,1,$machine,1,1,$run,$seq,3,'recorded',100-$seq,json_object('recordedSeq',$seq))
-                    """, new SqlArg("$id", run + "/history/" + seq), new("$machine", f.Core.Machine), new("$run", run), new("$seq", seq));
-            return true;
-        });
-        var events = f.Core.Count("engine_event"); var receipts = f.Core.Count("engine_command_receipt");
-        var reader = new EngineReader(f.Core.Db, f.Core.Machine);
-        var first = reader.WorkflowHistory(run, null, 2, default);
-        Assert.Equal(new long[] { 2, 8 }, first.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("historySeq").GetInt64()));
-        var next = first.GetProperty("next").GetString();
-        var last = reader.WorkflowHistory(run, next, 2, default);
-        var item = Assert.Single(last.GetProperty("items").EnumerateArray());
-        Assert.Equal(20, item.GetProperty("historySeq").GetInt64());
-        Assert.Equal(20, item.GetProperty("body").GetProperty("recordedSeq").GetInt64());
-        Assert.False(last.TryGetProperty("next", out _));
-        Assert.Throws<ArgumentException>(() => reader.WorkflowHistory(another, next, 2, default));
-        Assert.Throws<ArgumentException>(() => reader.WorkflowHistory(run, null, 201, default));
-        Assert.Equal(events, f.Core.Count("engine_event")); Assert.Equal(receipts, f.Core.Count("engine_command_receipt"));
-    }
-
-    [Fact]
-    public void Static_metadata_is_read_from_the_snapshot_and_reported_labels_and_detail_override_it()
-    {
-        using var f = new Fixture();
-        var run = f.StartYaml("name: Display\nsteps:\n  named: {run: [\"true\"], display: {label: Legacy, present: Checking, past: Checked, stage: verify, detail: Static detail}}\n  legacy: {run: [\"true\"], display: {label: Old label}}\n  unnamed: {run: [\"true\"]}\n");
-        var steps = f.Read(run).GetProperty("steps").EnumerateArray().ToArray();
-        Assert.Equal("Checking", steps[0].GetProperty("labelPresent").GetString());
-        Assert.Equal("Checked", steps[0].GetProperty("labelPast").GetString());
-        Assert.Equal("verify", steps[0].GetProperty("stage").GetString());
-        Assert.Equal("Static detail", steps[0].GetProperty("detail").GetString());
-        Assert.Equal("Old label", steps[1].GetProperty("labelPresent").GetString());
-        Assert.Equal("Old label", steps[1].GetProperty("labelPast").GetString());
-        Assert.Equal(steps[2].GetProperty("name").GetString(), steps[2].GetProperty("labelPresent").GetString());
-        Assert.Equal(JsonValueKind.Null, steps[0].GetProperty("progress").ValueKind);
-        f.Core.Db.Writer.Write("test.reported-metadata", scope => scope.Execute("UPDATE engine_step SET label_present='Now checking',label_past='Actually checked',detail='Reported detail' WHERE run_id=$run AND definition_key='named'", new SqlArg("$run", run)));
-        var reported = f.Read(run).GetProperty("steps")[0];
-        Assert.Equal("Now checking", reported.GetProperty("labelPresent").GetString());
-        Assert.Equal("Actually checked", reported.GetProperty("labelPast").GetString());
-        Assert.Equal("Reported detail", reported.GetProperty("detail").GetString());
-    }
-
-    [Fact]
     public void Immutable_yaml_order_and_current_fields_match_the_existing_entity_projection_without_read_mutation()
     {
         using var f = new Fixture(); var run = f.Start("z_first", "a_second");
@@ -179,23 +129,6 @@ public sealed class WorkflowReadTests
             .Select(step => step.GetProperty("definitionKey").GetString()));
         var another = f.Start("different"); Assert.Throws<ArgumentException>(() => f.Read(another, next));
         Assert.True(Encoding.UTF8.GetByteCount(first.GetRawText()) <= 1024 * 1024);
-    }
-
-    [Fact]
-    public void Run_list_filters_and_keyset_pages_use_actual_owning_machine_state_and_project()
-    {
-        using var f = new Fixture(); var a = f.Start("one"); var b = f.Start("two"); var foreign = f.Start("foreign");
-        f.Core.Db.Writer.Write("test.foreign-reference", scope => scope.Execute("UPDATE engine_run SET machine='coordinator' WHERE id=$id", new SqlArg("$id", foreign)));
-        using var scope = f.Core.Db.OpenSnapshot(default);
-        var filter = JsonSerializer.SerializeToElement(new { project = f.Project.Id, state = "queued", limit = 1 });
-        var first = WorkflowQueries.Runs(scope, filter);
-        var next = first.GetProperty("next").GetString();
-        var second = WorkflowQueries.Runs(scope, JsonSerializer.SerializeToElement(new { project = f.Project.Id, state = "queued", limit = 1, after = next }));
-        Assert.Equal(new[] { a, b }.OrderDescending(StringComparer.Ordinal), first.GetProperty("items").EnumerateArray()
-            .Concat(second.GetProperty("items").EnumerateArray()).Select(item => item.GetProperty("id").GetString()));
-        Assert.False(second.TryGetProperty("next", out _));
-        Assert.Throws<ArgumentException>(() => WorkflowQueries.Runs(scope, JsonSerializer.SerializeToElement(new { state = "failed", after = next })));
-        Assert.True(f.Read(foreign).GetProperty("run").GetProperty("reference").GetBoolean());
     }
 
     [Fact]

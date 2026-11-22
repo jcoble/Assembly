@@ -9,7 +9,7 @@ import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
 import { ensureTools, keepNewer, latestTools, toolKey } from './dev-toolchain.ts';
 import { waitForIdle } from './dev-remote-idle.ts';
-import { HostDown, HostUnseen, waitForAnswer } from './dev-remote-ready.ts';
+import { HostDown, HostUnseen, startStoppedHost, waitForAnswer } from './dev-remote-ready.ts';
 import { stage } from './dev-remote-timing.ts';
 
 const owner = lifetime(true);
@@ -52,7 +52,11 @@ try {
   }
   if (request.managed && JSON.stringify(JSON.parse(await fs.readFile(join(root, 'lane-owner.json'), 'utf8'))) !== JSON.stringify(request.managed.owner))
     throw Error('managed lane reservation belongs to another checkout; no update performed');
-  const before = await probe();
+  let before = await probe();
+  if (before.stopped) {
+    console.log(`Workbox Test ${target.unit} is installed but stopped; starting it`);
+    before = await startStoppedHost({ unit: target.unit, run, answer: () => probe(), signal: owner.signal });
+  }
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
   if (identity !== request.identity) throw Error('source identity differs after transfer');
   let desiredTools = request.managed ? toolKey(keepNewer(request.managed.versions, before.toolVersions), request.sources, 'linux-x64') : undefined;

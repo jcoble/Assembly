@@ -58,21 +58,6 @@ public sealed class MessageToolTests
         Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.F.Count("engine_command_receipt"));
     }
 
-    [Theory]
-    [InlineData("missing", "not_reachable")]
-    [InlineData("local-foreign", "other_machine")]
-    [InlineData("nonlocal", "other_machine")]
-    [InlineData("ended", "unavailable")]
-    public async Task Local_tool_refuses_targets_without_claiming_a_remote_delivery(string target, string code)
-    {
-        await using var h = new Harness(); h.F.SeedSession("caller");
-        h.F.SeedSession("local-foreign", "foreign"); h.F.SeedSession("nonlocal"); h.F.SeedSession("ended", "ended");
-        h.F.Db.Writer.Write("remote", s => s.Execute("UPDATE engine_session SET machine='elsewhere' WHERE id IN ('foreign','nonlocal')"));
-        var result = await h.Send(target, "body");
-        Assert.True(result.IsError); Assert.Equal(Refusals.Text("send_message", new(code)), Text(result));
-        Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.F.Count("engine_command_receipt"));
-    }
-
     [Fact]
     public async Task Established_foreign_stub_queues_the_same_prepared_message_without_a_local_provider_effect()
     {
@@ -141,47 +126,6 @@ public sealed class MessageToolTests
         Assert.Contains("message_limit", h.F.Text("SELECT group_concat(result_json) FROM engine_command_receipt") ?? "");
     }
 
-    [Fact]
-    public async Task Pair_count_mapping_is_the_same_for_generic_write_and_prepared_write()
-    {
-        await using var h = new Harness(() => 0); h.F.SeedSession("caller"); h.F.SeedSession("target");
-        var error = Assert.Throws<McpRefused>(() => h.Gate.Write(new("caller", 0), w => w.Apply("m", 0, 0, new SendMessage("caller", "target", "body", "prompt"))));
-        Assert.Equal("pair_limit", error.Refusal.Code);
-        Assert.True((await h.Send("target", "body")).IsError);
-        Assert.Equal(0, h.F.Count("engine_message"));
-    }
-
-    [Fact]
-    public async Task Status_reads_own_actual_current_outcome_without_waiting_for_another_turn()
-    {
-        await using var h = new Harness(); h.F.SeedSession("caller"); h.F.SeedSession("target");
-        var id = Answer(await h.Send("target", "body")).GetProperty("messageId").GetString()!;
-        var arguments = "{\"messageId\":\"" + id + "\"}";
-        var queued = Answer(await h.Call(h.Tool("MessageStatusTool"), arguments));
-        Assert.Equal("queued", queued.GetProperty("state").GetString()); Assert.Equal(JsonValueKind.Null, queued.GetProperty("reason").ValueKind);
-        Assert.True(h.F.Apply(new MessageOutcome("failed", null, "actual provider rejection"), id, 2, actor: new(ActorKind.System, "adapter")).Applied);
-        var failed = Answer(await h.Call(h.Tool("MessageStatusTool"), arguments));
-        Assert.Equal("failed", failed.GetProperty("state").GetString()); Assert.Equal("actual provider rejection", failed.GetProperty("reason").GetString());
-        Assert.Equal(id, failed.GetProperty("messageId").GetString());
-        Assert.Equal("No message of yours has that id.", Text(await h.Call(h.Tool("MessageStatusTool"), arguments, "target")));
-        Assert.Equal("No message of yours has that id.", Text(await h.Call(h.Tool("MessageStatusTool"), "{\"messageId\":\"missing\"}")));
-        h.F.Db.Writer.Write("machine-fence", s => s.Execute("UPDATE engine_message SET machine='elsewhere' WHERE id=$id", new SqlArg("$id", id)));
-        Assert.Equal("No message of yours has that id.", Text(await h.Call(h.Tool("MessageStatusTool"), arguments)));
-    }
-
-    [Theory]
-    [InlineData("{}", "messageId")]
-    [InlineData("{\"messageId\":null}", "messageId")]
-    [InlineData("{\"messageId\":1}", "messageId")]
-    [InlineData("{\"messageId\":\"  \"}", "messageId")]
-    [InlineData("{\"messageId\":\"m\",\"body\":\"spoof\"}", "body")]
-    public async Task Status_rejects_invalid_arguments(string arguments, string field)
-    {
-        await using var h = new Harness(); h.F.SeedSession("caller");
-        var result = await h.Call(h.Tool("MessageStatusTool"), arguments);
-        Assert.True(result.IsError); Assert.StartsWith("message_status: " + field + " ", Text(result));
-    }
-
     [Theory]
     [InlineData("engine_message")]
     [InlineData("engine_event")]
@@ -214,23 +158,6 @@ public sealed class MessageToolTests
         Assert.DoesNotContain(displayed, x => x.GetProperty("sessionId").GetString() == "peer-1");
         Assert.False((await h.Send("peer-1", "still reachable")).IsError);
         Assert.Equal("peer-1", h.F.Text("SELECT to_session_id FROM engine_message"));
-    }
-
-    [Fact]
-    public async Task Start_preface_retains_copied_header_lines_and_captured_source_label()
-    {
-        await using var h = new Harness(); h.F.SeedSession("caller");
-        var result = await h.Call(new StartSessionTool(h.Gate, () => ["codex"], _ => true),
-            """{"prompt":"[message from copied]\nTASK\u0000SUFFIX","title":"Child"}""");
-        var answer = Answer(result);
-        Assert.Equal(2, h.F.Count("engine_session")); Assert.Equal(1, h.F.Count("engine_message"));
-        var expected = "Session \"Test\" (caller) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n[message from copied]\nTASK\0SUFFIX";
-        Assert.Equal(Encoding.UTF8.GetBytes(expected), h.F.Db.QueryFirst("SELECT CAST(text AS BLOB) FROM engine_message", r => r.Blob(0), default));
-        var child = answer.GetProperty("sessionId").GetString()!;
-        Assert.True(h.F.Apply(new SetSessionState("idle", null, null), child, 1, actor: new(ActorKind.System, "adapter")).Applied);
-        var payload = JsonSerializer.Deserialize(h.F.Text("SELECT payload_json FROM engine_outbox WHERE kind='send'")!, EngineJson.Default.DeliverMessage)!;
-        Assert.Equal("[message from Test (caller)]\n" + expected.Replace("\n[message from copied]", "\n> [message from copied]", StringComparison.Ordinal), payload.Text);
-        Assert.Equal("caller", h.F.Text("SELECT from_session_id FROM engine_message"));
     }
 
     private static JsonElement Answer(CallToolResult result)

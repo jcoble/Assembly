@@ -76,6 +76,17 @@ impl SessionPane {
         Some((key.clone(), kept.open, kept.toggled_at))
     }
 
+    /// An item row's key and its label in the accessibility tree; other entries (loading, a fold's heading, the
+    /// working line) aren't exposed as rows.
+    pub(super) fn row_access(&self, entry: &Entry) -> Option<(String, String)> {
+        let Entry::Item(at) = entry else { return None };
+        let item = self.view.items.get(*at)?;
+        Some((
+            item.key.clone(),
+            crate::features::session::view::item_row::row_label(item),
+        ))
+    }
+
     pub(super) fn row(&mut self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
         let on_action = &self.on_action.clone();
         let muted = cx.theme().muted_foreground;

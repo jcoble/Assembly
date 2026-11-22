@@ -37,6 +37,29 @@ export async function readPreparedBackend(root: string, identity: string, source
   try { cached = JSON.parse(await fs.readFile(join(root, 'prepared-backend.json'), 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   if (cached.identity !== identity) return undefined;
+  return verifyPrepared(root, cached, identity, source, signal);
+}
+// The pointer names the last build only. A commit deployed before keeps its release under bin/<commit>-<manifest>;
+// the same checks decide whether that release is this build. One that fails them is replaced, not reused.
+async function findRelease(root: string, request: { identity: string; commit: string }, signal: AbortSignal) {
+  let entries: string[];
+  try { entries = await fs.readdir(join(root, 'bin')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  for (const entry of entries) {
+    const name = /^([a-f0-9]{40})-([a-f0-9]{64})$/.exec(entry);
+    if (name?.[1] !== request.commit) continue;
+    const candidate = { ...request, directory: join(root, 'bin', entry), manifestSha256: name[2] };
+    try { return await verifyPrepared(root, candidate, request.identity, process.cwd(), signal); }
+    catch { signal.throwIfAborted(); }
+  }
+  return undefined;
+}
+async function writePointer(root: string, prepared: PreparedBackend) {
+  const pointer = join(root, 'prepared-backend.json'), staging = pointer + '.' + randomUUID();
+  await fs.writeFile(staging, JSON.stringify(prepared) + '\n', { flag: 'wx', mode: 0o600 });
+  await fs.rename(staging, pointer);
+}
+async function verifyPrepared(root: string, cached: PreparedBackend, identity: string, source: string, signal?: AbortSignal) {
   if (!/^[a-f0-9]{40}$/.test(cached.commit) || !/^[a-f0-9]{64}$/.test(cached.manifestSha256)
     || cached.directory !== join(root, 'bin', cached.commit + '-' + cached.manifestSha256)
     || await fs.realpath(cached.directory) !== cached.directory) throw Error('prepared backend cache has an invalid lane path');
@@ -67,8 +90,10 @@ export async function readPreparedBackend(root: string, identity: string, source
 
 export async function prepareBackend(root: string, request: { identity: string; commit: string }, currentDll: string | undefined, signal: AbortSignal) {
   const built = stage('build');
-  const cached = await readPreparedBackend(root, request.identity, process.cwd(), signal);
+  const pointed = await readPreparedBackend(root, request.identity, process.cwd(), signal);
+  const cached = pointed ?? await findRelease(root, request, signal);
   if (cached) {
+    if (!pointed) await writePointer(root, cached);
     built({ cacheHit: true, built: false });
     return cached;
   }
@@ -88,12 +113,13 @@ export async function prepareBackend(root: string, request: { identity: string; 
     const result = await writeRemoteBackendDirectory({ publishDir: publish, sourceDir: process.cwd(), commit: request.commit, outputDir: join(temporary, 'package') }, previous);
     const directory = join(root, 'bin', request.commit + '-' + result.manifestSha256);
     await fs.mkdir(join(root, 'bin'), { recursive: true });
+    // A release of this name is here only if it failed findRelease's checks: it goes with the temporary folder.
+    try { await fs.rename(directory, join(temporary, 'replaced')); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     await fs.rename(join(temporary, 'package'), directory);
     packaged({ files: result.manifest.files.length, reusedFiles: result.reusedFiles, changedFiles: result.changedFiles, removedFiles: result.removedFiles, changedBytes: result.changedBytes, binaryNetworkBytes: 0 });
     const prepared = { identity: request.identity, commit: request.commit, directory, manifestSha256: result.manifestSha256 };
-    const pointer = join(root, 'prepared-backend.json'), staging = pointer + '.' + randomUUID();
-    await fs.writeFile(staging, JSON.stringify(prepared) + '\n', { flag: 'wx', mode: 0o600 });
-    await fs.rename(staging, pointer);
+    await writePointer(root, prepared);
     return prepared;
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
 }

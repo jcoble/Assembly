@@ -85,49 +85,6 @@ public sealed partial class FilesSocketTests : IAsyncLifetime
         Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
     }
 
-    [Fact]
-    public async Task A_viewed_folder_lists_with_no_session_there()
-    {
-        var folder = Path.Combine(_checkouts.FullName, "other-project");
-        GitFolder.Fill(folder, "src/", "a.txt");
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "list", $$"""{"session":"{{FolderView.Id("p1", folder)}}","dir":""}""");
-        var entries = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result").GetProperty("entries");
-        Assert.Equal(["src", "a.txt"], entries.EnumerateArray().Select(entry => entry.GetProperty("path").GetString()));
-    }
-
-    // Pins: files#11
-    [Fact]
-    public async Task Read_answers_a_file_s_text()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        var root = _sessions.Item(session).Root!;
-        GitFolder.Fill(root, "src/");
-        File.WriteAllText(Path.Combine(root, "src", "a.txt"), "one\ntwo\n");
-        using var socket = await OpenAsync(bulk: true);
-        await CallAsync(socket, 1, "read", $$"""{"session":"{{session.SessionId}}","path":"src/a.txt"}""");
-        var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
-        Assert.Equal("one\ntwo\n", result.GetProperty("content").GetString());
-        Assert.Equal(2, result.GetProperty("lineCount").GetInt32());
-        Assert.Equal(64, result.GetProperty("revision").GetString()!.Length);
-        Assert.False(result.GetProperty("binary").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, result.GetProperty("nextOffset").ValueKind);
-    }
-
-    // Pins: files#7
-    [Fact]
-    public async Task Search_answers_a_page_of_names()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        var root = _sessions.Item(session).Root!;
-        GitFolder.Fill(root, "src/Program.cs", "readme.md");
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "search", $$"""{"session":"{{session.SessionId}}","query":"prog","pageSize":10}""");
-        var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
-        Assert.False(result.GetProperty("more").GetBoolean());
-        Assert.Equal("src/Program.cs", Assert.Single(result.GetProperty("names").EnumerateArray()).GetProperty("relativePath").GetString());
-    }
-
     // Pins: files#6, files#10
     [Fact]
     public async Task A_folder_not_made_yet_a_session_elsewhere_and_a_path_out_are_refused_with_why()

@@ -48,6 +48,8 @@ if (!dll?.startsWith(root + '/bin/') || !dll.endsWith('/Assembly.Remote.dll') ||
  throw Error('existing unit is outside this lane or has an unsupported shape');
 if (!fs.realpathSync(dll).startsWith(root + '/bin/')) throw Error('backend resolves outside lane bin');
 const pid = execFileSync('systemctl', ['--user', 'show', lane.unit, '-p', 'MainPID', '--value'], {encoding:'utf8'}).trim();
+// An installed unit that is stopped has no process to check; the caller starts it and asks again.
+if (pid === '0') { console.log(JSON.stringify({stopped:true})); process.exit(0); }
 const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0');
 if (cmdline[1] !== dll || !cmdline.includes('serve')) throw Error('running process differs from unit');
 const token = fs.readFileSync(flag('--token-file'), 'utf8').split('\n').find(x=>x.startsWith('ASSEMBLY_TOKEN='))?.slice(15);

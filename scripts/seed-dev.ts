@@ -33,6 +33,20 @@ export function safePath(input: string, mustExist = true): string {
   while (!existsSync(ancestor)) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
   return join(realpathSync(ancestor), ...suffix);
 }
+// Whether a launch should ask the installer to look: there is no agents file, or an ACP adapter it lists, or the program
+// that runs one, is gone. Which entries are the installer's to rewrite is the installer's own knowledge, so a launch over
+// an existing file asks it for a repair only (app-dev.ts). A file that cannot be read is the owner's and is left alone.
+export function agentsNeedInstall(file: string): boolean {
+  if (!existsSync(file)) return true;
+  const gone = (path: unknown) => typeof path === 'string' && isAbsolute(path) && !existsSync(path);
+  try {
+    const agents = JSON.parse(readFileSync(file, 'utf8')) as { command?: unknown; args?: unknown[] }[];
+    return Array.isArray(agents) && agents.some(agent => {
+      const entry = agent?.args?.[0];
+      return typeof entry === 'string' && entry.includes('/node_modules/@agentclientprotocol/') && (gone(entry) || gone(agent.command));
+    });
+  } catch { return false; }
+}
 export function profileFor(input: string, userHome = homedir()): { root: string; home: string } {
   const root = realpathSync(safePath(input));
   for (const marker of ['desktop/Cargo.toml', 'dotnet/Assembly.Desktop/Assembly.Desktop.csproj']) {

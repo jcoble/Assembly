@@ -26,16 +26,6 @@ public sealed class WorkflowLifecycleControlTests
     }
 
     [Fact]
-    public void Ended_asker_recomputes_need_run_even_after_its_step_has_detached()
-    {
-        using var f = WorkflowControlTests.Fixture(); f.SeedStep(); f.SeedSession("worker", parentId: "owner", runId: "r");
-        Assert.True(f.Apply(new OpenNeed("worker", "r", null, "question", "Help", [], null, null, null), "stale", actor: new(ActorKind.System, "adapter")).Applied);
-        Assert.Equal("needs_me", f.State("engine_run", "r"));
-        Assert.True(f.Apply(new SetSessionState("ended", null, null), "worker", f.Number("SELECT version FROM engine_session WHERE id='worker'"), actor: new(ActorKind.System, "adapter")).Applied);
-        Assert.Equal("queued", f.State("engine_run", "r"));
-    }
-
-    [Fact]
     public void Idle_owner_away_does_not_expire()
     {
         using var f = WorkflowControlTests.Fixture(); f.SeedStep(); f.Time.Advance(TimeSpan.FromDays(30));

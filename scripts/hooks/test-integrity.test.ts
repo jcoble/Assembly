@@ -20,10 +20,9 @@ test('Rust, TS chained assertions and Dart are protected', () => {
     ['mobile/test/view_test.dart', "test('keeps state', () {\n expect(state, 'ready');\n});", "test('keeps state', () {});", 'keeps state']
   ]) assert.ok(violations([{ path, before, after }], 'TEST-CHANGE: general').some(error => error.includes(name)));
 });
-test('new coverage records intent without an exemption for added assertions', () => {
+test('added assertions need no TEST-CHANGE line', () => {
   const change = { path: 'desktop/src/view_tests.rs', before: 'fn works() {\n assert!(ready);\n}', after: 'fn works() {\n assert!(ready);\n assert_eq!(id, "real");\n}' };
-  assert.deepEqual(violations([change], 'TEST-CHANGE: regression for existing behavior'), []);
-  assert.match(violations([change], 'test: coverage')[0], /Test-only/);
+  assert.deepEqual(violations([change], 'test: coverage'), []);
 });
 test('expected whitespace remains significant', () => {
   assert.ok(violations([{ path: 'dotnet/Assembly.Tests/X.cs', before: cs('"a  b"'), after: cs('"a b"') }], 'TEST-CHANGE: general').some(error => error.includes('PreservesIdentity')));

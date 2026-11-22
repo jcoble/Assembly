@@ -1,5 +1,5 @@
 //! The client thread's rules against `FakeBackend`: hello, calls and their answers, cancel and latest-wins,
-//! subscriptions, and a dropped socket's one reopen. Pins the draft list in docs/behavior/g0-socket.md.
+//! subscriptions, and a dropped socket's one reopen. Pins the draft list in g0-socket: behavior list (https://app.notion.com/p/409394b0689d81168a26f446de389169).
 
 use std::time::{Duration, Instant};
 

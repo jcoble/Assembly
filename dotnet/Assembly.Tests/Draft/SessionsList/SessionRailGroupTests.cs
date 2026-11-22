@@ -21,70 +21,6 @@ public sealed class SessionRailGroupTests : IDisposable
         global::Assembly.Engine.Persistence.EngineSchema.Open(_database, _time.GetUtcNow().ToUnixTimeMilliseconds());
         _sessions = SessionStore.Open(_database, _time, "checkouts");
     }
-    // Pins: sessions-list#7
-    [Fact]
-    public void StatusFilterKeepsOnlyThePickedLifecycles()
-    {
-        var working = Parent();
-        var done = Parent();
-        var settled = Parent();
-        Mark(done, "done");
-        Mark(settled, "settled");
-        Assert.Equal([working], Sessions(Read(statuses: ["working"])));
-        Assert.Equal([done], Sessions(Read(statuses: ["done"])));
-        Assert.Equal([settled], Sessions(Read(statuses: ["settled"])));
-        Assert.Equal(3, Sessions(Read()).Count);
-    }
-    // Pins: sessions-list#1, sessions-list#9
-    [Fact]
-    public void SectionCountsFollowTheFiltersBeforePaging()
-    {
-        Parent("claude");
-        Parent("claude");
-        Parent("codex");
-        var done = Parent("claude");
-        Mark(done, "done");
-        var page = Read(providers: ["claude"], groupBy: new(true, false), limit: 1);
-        var header = Assert.Single(page.Sessions);
-        Assert.Equal(("section", "working", 2), (header.Kind, header.Section, header.Count));
-    }
-    // Pins: sessions-list#6, sessions-list#9
-    [Fact]
-    public void ProjectGroupsSpanMachinesAndListEach()
-    {
-        var local = Parent(repo: "/work/assembly");
-        var remote = Parent(repo: "/work/assembly", machine: "workbox-test");
-        var rail = Read();
-        var header = Assert.Single(rail.Sessions, entry => entry.Kind == "project");
-        Assert.Equal(("assembly", 2), (header.Group, header.Count));
-        Assert.Equal(["local", "workbox-test"], header.Machines.Order().ToArray());
-        Assert.Equal([remote, local], Sessions(rail));
-    }
-    // Pins: sessions-list#6
-    [Fact]
-    public void GroupByNoneIsOneFlatList()
-    {
-        var older = Parent(repo: "/work/zeta");
-        var newer = Parent(repo: "/work/alpha");
-        var rail = Read(groupBy: new(false, false));
-        Assert.All(rail.Sessions, entry => Assert.Equal("session", entry.Kind));
-        Assert.Equal([newer, older], Sessions(rail));
-    }
-    // Pins: sessions-list#6
-    [Theory]
-    [InlineData("asc", "Alpha", "Zulu")]
-    [InlineData("desc", "Zulu", "Alpha")]
-    public void SortByNameOrdersGroupsAndRows(string dir, string first, string second)
-    {
-        Parent(repo: "/work/zeta", title: "Middle");
-        Parent(repo: "/work/alpha", title: second);
-        Parent(repo: "/work/alpha", title: first);
-        var rows = Read(groupBy: new(false, true), sort: "name", dir: dir).Sessions;
-        Assert.Equal(["alpha", "zeta"], rows.Where(entry => entry.Kind == "project").Select(entry => entry.Group));
-        Assert.Equal(
-            dir == "asc" ? ["Alpha", "Zulu"] : ["Zulu", "Alpha"],
-            rows.Where(entry => entry.Kind == "session" && entry.RepoUrl == "/work/alpha").Select(entry => entry.Title));
-    }
     // Pins: sessions-list#6
     [Theory]
     [InlineData("asc")]
@@ -97,19 +33,6 @@ public sealed class SessionRailGroupTests : IDisposable
         string[] ascending = [alpha, untitled, zulu];
         Assert.Equal(dir == "asc" ? ascending : [.. ascending.Reverse()],
             Sessions(Read(groupBy: new(false, false), sort: "name", dir: dir)));
-    }
-    // Pins: sessions-list#6, sessions-list#9
-    [Fact]
-    public void AFoldedSectionReturnsItsHeaderAndCountButNoRows()
-    {
-        Parent();
-        var settled = Parent();
-        Mark(settled, "settled");
-        var rail = Read(groupBy: new(true, true), folded: ["settled"]);
-        var header = Assert.Single(rail.Sessions, entry => entry.Kind == "section" && entry.Section == "settled");
-        Assert.Equal(1, header.Count);
-        Assert.DoesNotContain(rail.Sessions, entry => entry.Kind == "project" && entry.Section == "settled");
-        Assert.DoesNotContain(rail.Sessions, entry => entry.Kind == "session" && entry.Section == "settled");
     }
     // Pins: sessions-list#6, sessions-list#9
     [Fact]

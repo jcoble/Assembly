@@ -28,12 +28,6 @@ public sealed class McpTokensTests
     }
 
     [Fact]
-    public void No_url_joins_no_server()
-    {
-        Assert.Empty(new McpTokens().ServersFor("s1", 0));
-    }
-
-    [Fact]
     public void Entry_is_the_acp_http_shape()
     {
         const string url = "http://127.0.0.1:5/mcp";

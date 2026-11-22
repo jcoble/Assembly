@@ -9,6 +9,22 @@ import { fileURLToPath } from "node:url";
 import { validateVersions, smokeAdapter, archiveBundle, packagingDigest, releaseBehind } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
+test("local packaging can replace an earlier archive while release packaging refuses it", () => fixture(root => {
+  const bundle = join(root, "bundle"), output = join(root, "output");
+  mkdirSync(bundle); mkdirSync(output);
+  for (const file of ["package.json", "package-lock.json"]) writeFileSync(join(bundle, file), "{}");
+  for (const [name, version] of Object.entries(versions)) {
+    const dir = join(bundle, "node_modules/@agentclientprotocol", name);
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
+    writeFileSync(join(dir, "dist/index.js"), "first");
+  }
+  archiveBundle(bundle, output, "darwin-arm64", versions);
+  assert.throws(() => archiveBundle(bundle, output, "darwin-arm64", versions), /Refusing to overwrite/);
+  writeFileSync(join(bundle, "package.json"), '{"private":true}');
+  const replaced = archiveBundle(bundle, output, "darwin-arm64", versions, true);
+  assert.equal(execFileSync("tar", ["-xOf", join(output, replaced.archive.file), "package.json"], { encoding: "utf8" }), '{"private":true}');
+}));
 function fixture(run: (root: string) => unknown) {
   const root = mkdtempSync(join(tmpdir(), "assembly-adapter-test-"));
   return Promise.resolve().then(() => run(root)).finally(() => rmSync(root, { recursive: true, force: true }));

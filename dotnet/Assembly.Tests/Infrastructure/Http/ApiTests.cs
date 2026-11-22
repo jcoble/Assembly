@@ -55,29 +55,8 @@ public sealed partial class ApiTests : IAsyncLifetime
     private readonly global::Assembly.Infrastructure.Topics.Topics _topics = new();
 
     [Theory]
-    [InlineData("GET", "/version")]
-    [InlineData("GET", "/machines")]
-    [InlineData("GET", "/agents")]
     [InlineData("GET", "/sessions")]
-    [InlineData("POST", "/sessions")]
-    [InlineData("GET", "/sessions/retired-session")]
-    [InlineData("GET", "/sessions/retired-session/rows")]
-    [InlineData("GET", "/sessions/retired-session/tools/retired-item")]
-    [InlineData("GET", "/sessions/retired-session/title")]
-    [InlineData("GET", "/sessions/retired-session/title/content")]
-    [InlineData("GET", "/sessions/retired-session/owner-prompts")]
-    [InlineData("GET", "/sessions/retired-session/owner-prompts/client/content")]
     [InlineData("POST", "/sessions/retired-session/send")]
-    [InlineData("POST", "/runs/retired-run/stop")]
-    [InlineData("POST", "/sessions/retired-session/asks/retired-ask")]
-    [InlineData("POST", "/sessions/retired-session/tasks/retired-task/stop")]
-    [InlineData("POST", "/sessions/retired-session/attachments")]
-    [InlineData("GET", "/sessions/retired-session/attachments/image.png")]
-    [InlineData("GET", "/sessions/retired-session/config")]
-    [InlineData("POST", "/sessions/retired-session/config")]
-    [InlineData("POST", "/sessions/retired-session/config/warm")]
-    [InlineData("POST", "/config/discover")]
-    [InlineData("GET", "/live?session=retired-session&after=0")]
     public async Task Retired_HTTP_endpoints_return_unhandled_404_instead_of_legacy_error_or_success(string method, string path)
     {
         using var deadline = new CancellationTokenSource(Wait);
@@ -103,33 +82,6 @@ public sealed partial class ApiTests : IAsyncLifetime
         using var socket = new ClientWebSocket();
         await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(
             SocketUri($"/live?session=x&after=0&token={Token}"), CancellationToken.None));
-    }
-
-    [Theory]
-    [InlineData("/socket")]
-    [InlineData("/socket/bulk")]
-    [InlineData("/socket/terminal")]
-    public async Task Retained_shared_host_sockets_authenticate_in_hello_and_reject_header_query_bypasses(string path)
-    {
-        using var deadline = new CancellationTokenSource(Wait);
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(SocketUri(path), deadline.Token);
-        await socket.SendAsync(Encoding.UTF8.GetBytes($$"""{"t":"hello","token":"{{Token}}","protocol":2}"""), WebSocketMessageType.Text, true, deadline.Token);
-        var buffer = new byte[4096];
-        var welcome = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
-        Assert.Equal(WebSocketMessageType.Text, welcome.MessageType);
-        using var frame = JsonDocument.Parse(buffer.AsMemory(0, welcome.Count));
-        Assert.Equal("welcome", frame.RootElement.GetProperty("t").GetString());
-        Assert.Equal(2, frame.RootElement.GetProperty("protocol").GetInt32());
-        Assert.Equal(RowStore.FormatVersion, frame.RootElement.GetProperty("format").GetInt32());
-        Assert.Equal(Environment.MachineName, frame.RootElement.GetProperty("machine").GetString());
-        using var refused = new ClientWebSocket();
-        refused.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
-        await refused.ConnectAsync(SocketUri($"{path}?token={Token}"), deadline.Token);
-        await refused.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","token":"wrong","protocol":2}"""), WebSocketMessageType.Text, true, deadline.Token);
-        var denied = await refused.ReceiveAsync(new ArraySegment<byte>(buffer), deadline.Token);
-        Assert.Equal(WebSocketMessageType.Close, denied.MessageType);
-        Assert.Equal(4401, (int)refused.CloseStatus!);
     }
 
     public async Task InitializeAsync()

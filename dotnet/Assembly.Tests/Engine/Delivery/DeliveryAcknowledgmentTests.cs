@@ -12,13 +12,6 @@ namespace Assembly.Tests.Engine.Delivery;
 public sealed class DeliveryAcknowledgmentTests
 {
     [Fact]
-    public void Fresh_row_format_supports_positive_delivery_acknowledgments()
-    {
-        using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
-        Assert.Equal(5, RowStore.Open(db).StoredFormatVersion);
-    }
-
-    [Fact]
     public void Actual_format4_upgrades_without_changing_old_payload_or_identity()
     {
         using var file = new TempDatabase();

@@ -89,6 +89,9 @@ public sealed class TerminalSocketEngineTests
             Assert.Null(failure);
             Assert.Equal(shell.Id, Assert.Single(listed!).Id);
             pty.Started[0].Emit("through the real endpoint"u8.ToArray());
+            // The terminal's own reader stores what the program wrote; the read below returns only what is stored.
+            await using (var stored = terminals.OutputAsync(shell.Id, deadline.Token).GetAsyncEnumerator(deadline.Token))
+                Assert.True(await stored.MoveNextAsync());
             var piece = await remote.Terminals.CallAsync("read", new ReadArgs(shell.Id, 0), json.ReadArgs, json.OutputPiece, deadline.Token);
             Assert.Equal("through the real endpoint", Encoding.UTF8.GetString(piece.Data));
         }
