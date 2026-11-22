@@ -48,6 +48,8 @@ if (!dll?.startsWith(root + '/bin/') || !dll.endsWith('/Assembly.Remote.dll') ||
  throw Error('existing unit is outside this lane or has an unsupported shape');
 if (!fs.realpathSync(dll).startsWith(root + '/bin/')) throw Error('backend resolves outside lane bin');
 const pid = execFileSync('systemctl', ['--user', 'show', lane.unit, '-p', 'MainPID', '--value'], {encoding:'utf8'}).trim();
+// An installed unit that is stopped has no process to check; the caller starts it and asks again.
+if (pid === '0') { console.log(JSON.stringify({stopped:true})); process.exit(0); }
 const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\0');
 if (cmdline[1] !== dll || !cmdline.includes('serve')) throw Error('running process differs from unit');
 const token = fs.readFileSync(flag('--token-file'), 'utf8').split('\n').find(x=>x.startsWith('ASSEMBLY_TOKEN='))?.slice(15);
@@ -69,8 +71,17 @@ socket.onmessage=e=>{
  if(frame.t!=='welcome' || frame.machine!=='workbox-test' || frame.protocol!==1 || frame.format!==5 || !/^[a-f0-9]{40}$/.test(frame.commit??'')) {
   console.error('host did not provide a compatible authenticated identity');process.exit(1);
  }
- clearTimeout(deadline);socket.close();process.stdin.pause();
- console.log(JSON.stringify({commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources}));
+ answered=true;clearTimeout(deadline);socket.close();process.stdin.pause();
+ console.log(JSON.stringify({...state,commit:frame.commit,backendIdentity:frame.backendIdentity,version:frame.version,engine:frame.engine}));
+};
+const state={commit:undefined,dll,unitDll,pid,unitSha:createHash('sha256').update(unit).digest('hex'),adapterOK,toolsKey,toolVersions,adapterSources};
+let answered=false;
+// A host on any other protocol refuses the hello with 4400 "expected a hello…": it is stale and gets the deploy.
+socket.onclose=e=>{
+ if(answered) return;
+ clearTimeout(deadline);process.stdin.pause();
+ if(e.code===4400 && e.reason.startsWith('expected a hello')) { console.log(JSON.stringify({...state,stale:true})); process.exit(0); }
+ console.error('host closed the socket: '+e.code+' '+e.reason);process.exit(1);
 };
 `;
-export type Probe = { missing?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };
+export type Probe = { missing?: boolean; stopped?: boolean; stale?: boolean; commit: string; backendIdentity?: string; version?: unknown; toolsKey?: string; toolVersions?: Record<string, string>; adapterSources?: string; engine?: string; dll: string; unitDll?: string; pid: string; unitSha: string; adapterOK: boolean };

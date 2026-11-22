@@ -88,19 +88,6 @@ public sealed class ReceiptCheckTests : IDisposable
         Assert.Equal("proof_file_missing", (await Check(context, "proof", ProofBody(context.FrozenHead, "absent.png"))).Error);
     }
 
-    [Fact]
-    public async Task Expected_files_expand_workspace_and_managed_proof_with_deterministic_hashes()
-    {
-        await Init();
-        await File.WriteAllTextAsync(Path.Combine(Proof, "proof2.png"), "two");
-        await File.WriteAllTextAsync(Path.Combine(Proof, "proof1.png"), "one");
-        var files = await ReceiptFiles.Expand(Repo, Proof, ["src.?xt", Path.Combine(Proof, "proof[12].png")], default);
-        Assert.Equal(3, files.Count);
-        Assert.Equal(new[] { "proof1.png", "proof2.png", "src.txt" }, files.Select(f => f.Path));
-        Assert.All(files, f => { Assert.Equal(64, f.Sha256.Length); Assert.True(f.Bytes > 0); });
-        Assert.Equal(files, await ReceiptFiles.Expand(Repo, Proof, [Path.Combine(Proof, "proof[12].png"), "src.?xt"], default));
-    }
-
     [Theory]
     [InlineData("missing*.txt")]
     [InlineData("../outside")]

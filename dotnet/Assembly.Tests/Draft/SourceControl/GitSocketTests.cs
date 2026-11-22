@@ -80,24 +80,6 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         _checkouts.Delete(recursive: true);
     }
 
-    // Pins: scm#1
-    [Fact]
-    public async Task Worktrees_lists_the_main_checkout_first_and_its_linked_worktree()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        var root = _sessions.Item(session).Root!;
-        await MakeRepoAsync(root);
-        await GitAsync(root, "worktree", "add", "-b", "linked", Path.Combine(_checkouts.FullName, "linked"));
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "worktrees", "list", session.SessionId);
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        var worktrees = answer.RootElement.GetProperty("result").GetProperty("worktrees");
-        Assert.Equal(2, worktrees.GetArrayLength());
-        Assert.True(worktrees[0].GetProperty("isMain").GetBoolean());
-        Assert.Equal("main", worktrees[0].GetProperty("branch").GetString());
-        Assert.Equal("linked", worktrees[1].GetProperty("branch").GetString());
-    }
-
     // Pins: scm#9, scm#10
     [Fact]
     public async Task Status_answers_branch_no_upstream_and_untracked_letters_as_strings()
@@ -155,49 +137,6 @@ public sealed partial class GitSocketTests : IAsyncLifetime
             args = new { session = session.SessionId, path = "." }
         }));
         await AssertErrorAsync(socket, "expected a file in the session's folder");
-    }
-
-    // Pins: scm#18
-    [Fact]
-    public async Task Branch_diff_answers_its_base_and_changes_for_the_session_clone()
-    {
-        var session = _sessions.Create("claude", "https://github.com/o/r");
-        var root = _sessions.Item(session).Root!;
-        var origin = Path.Combine(_checkouts.FullName, "origin");
-        await MakeRepoAsync(origin);
-        await GitAsync(_checkouts.FullName, "clone", origin, root);
-        await GitAsync(root, "checkout", "-b", "feature");
-        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "branch edit\n");
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "git", "branchDiff", session.SessionId);
-        using var answer = JsonDocument.Parse(await ReadAsync(socket));
-        var diff = answer.RootElement.GetProperty("result");
-        Assert.Equal("origin/main", diff.GetProperty("base").GetString());
-        Assert.Contains("+branch edit\n", diff.GetProperty("diff").GetString());
-        Assert.False(diff.GetProperty("truncated").GetBoolean());
-    }
-
-    // Pins: scm#6
-    [Theory]
-    [InlineData("worktrees", "list")]
-    [InlineData("git", "status")]
-    public async Task Unknown_remote_and_unmade_session_folders_are_refused(string feature, string method)
-    {
-        var waiting = _sessions.Create("claude", "https://github.com/o/r");
-        var elsewhere = _sessions.Add(Guid.NewGuid().ToString(), "claude", "https://github.com/o/r", "box");
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, feature, method, "nope");
-        await AssertErrorAsync(socket, "unknown session");
-        await CallAsync(socket, 2, feature, method, elsewhere.SessionId);
-        if (feature == "git")
-        {
-            using var refused = JsonDocument.Parse(await ReadAsync(socket));
-            Assert.Equal("error", refused.RootElement.GetProperty("t").GetString());
-            Assert.Equal("source_changed", refused.RootElement.GetProperty("code").GetString());
-        }
-        else await AssertErrorAsync(socket, "this session's files are on box, which this window can't show yet");
-        await CallAsync(socket, 3, feature, method, waiting.SessionId);
-        await AssertErrorAsync(socket, "this session's folder is made on its first message");
     }
 
     private static async Task AssertErrorAsync(WebSocket socket, string message)

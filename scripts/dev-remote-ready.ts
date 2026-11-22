@@ -29,3 +29,14 @@ export async function waitForAnswer<T>(options: { pid: string; state: () => Prom
     await delay(retryMs, undefined, { signal }).catch(() => {});
   }
 }
+
+// An installed host whose unit is stopped: starts it, then asks until it answers (the bounded wait above), so the
+// authenticated probe never meets a refused connection.
+export async function startStoppedHost<T>(options: { unit: string; run: (tool: string, args: string[]) => Promise<string>; answer: () => Promise<T>; signal: AbortSignal; limitMs?: number; retryMs?: number }): Promise<T> {
+  const { unit, run } = options;
+  const show = (property: string) => run('systemctl', ['--user', 'show', unit, '-p', property, '--value']);
+  await run('systemctl', ['--user', 'start', unit]);
+  const pid = await show('MainPID');
+  const state = async () => { const [active, main] = await Promise.all([show('ActiveState'), show('MainPID')]); return { active: active === 'active' || active === 'activating', pid: main }; };
+  return waitForAnswer({ ...options, pid, state });
+}

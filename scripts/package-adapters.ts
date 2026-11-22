@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,6 +10,14 @@ type Versions = Record<(typeof names)[number], string>;
 const targets = ["darwin-arm64", "darwin-x64", "linux-x64"];
 const providerRepo = "jcoble/Assembly";
 const entrypoint = (name: string) => "node_modules/@agentclientprotocol/" + name + "/dist/index.js";
+
+function saveManifest(path: string, manifest: unknown) {
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(manifest, null, 2) + "\n");
+    renameSync(temporary, path);
+  } finally { rmSync(temporary, { force: true }); }
+}
 
 export function validateVersions(value: unknown): Versions {
   if (!value || typeof value !== "object") throw new Error("Expected versions of both supported adapters");
@@ -119,7 +127,10 @@ export function smokeAdapter(entry: string, home: string): Promise<Record<string
   });
 }
 
-export function archiveBundle(bundle: string, output: string, target: string, versions: Versions) {
+// macOS can drop a .DS_Store into a folder mid-removal (ENOTEMPTY); retry so cleanup never fails a finished build.
+const removeTemporary = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+
+export function archiveBundle(bundle: string, output: string, target: string, versions: Versions, replace = false) {
   validateVersions(versions);
   if (!targets.includes(target)) throw new Error("Unsupported target: " + target);
   for (const name of names) {
@@ -129,14 +140,19 @@ export function archiveBundle(bundle: string, output: string, target: string, ve
   }
   const file = "assembly-adapters-" + target + ".tar.gz";
   const archive = join(output, file);
-  if (existsSync(archive)) throw new Error("Refusing to overwrite " + archive);
-  execFileSync("tar", ["-czf", archive, "-C", bundle, "package.json", "package-lock.json", "node_modules"]);
+  if (!replace && existsSync(archive)) throw new Error("Refusing to overwrite " + archive);
+  const staging = mkdtempSync(join(output, ".archive-"));
+  try {
+    const temporary = join(staging, file);
+    execFileSync("tar", ["-czf", temporary, "-C", bundle, "package.json", "package-lock.json", "node_modules"]);
+    renameSync(temporary, archive);
+  } finally { rmSync(staging, removeTemporary); }
   const manifest = {
     schemaVersion: 1, target, nodeMajor: Number(process.versions.node.split(".")[0]), versions,
     entrypoints: { "claude-agent-acp": entrypoint("claude-agent-acp"), "codex-acp": entrypoint("codex-acp") },
     archive: { file, sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
   };
-  writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(manifest, null, 2) + "\n");
+  saveManifest(join(output, "assembly-adapters-" + target + ".json"), manifest);
   return manifest;
 }
 
@@ -223,7 +239,7 @@ async function main() {
     return;
   }
   const [target, versionsJson, outputPath] = args;
-  if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | behind <versions-json> | provider-tag <target> | build <target> <versions-json> <output>");
+  if (!["build", "build-local"].includes(command) || !outputPath) throw new Error("Usage: package-adapters.ts resolve | behind <versions-json> | provider-tag <target> | build <target> <versions-json> <output>");
   if (!targets.includes(target) || target !== process.platform + "-" + process.arch) throw new Error("Build requires a native runner for " + target);
   const versions = validateVersions(JSON.parse(versionsJson));
   const output = resolve(outputPath);
@@ -240,17 +256,17 @@ async function main() {
       cwd: bundle, stdio: ["ignore", "inherit", "inherit"],
       env: { PATH: process.env.PATH, HOME: home, npm_config_cache: join(scratch, "cache"), npm_config_engine_strict: "true" },
     });
-    const manifest = archiveBundle(bundle, output, target, versions);
+    const manifest = archiveBundle(bundle, output, target, versions, command === "build-local");
     execFileSync("tar", ["-xzf", join(output, manifest.archive.file), "-C", unpacked]);
     const smoke: Record<string, any> = {};
     for (const name of names) smoke[name] = await smokeAdapter(join(unpacked, manifest.entrypoints[name]), join(scratch, "probe-" + name));
     // smokeAdapter resolves only for an adapter that can steer by one of the two routes.
     for (const name of names) smoke[name] = { ...smoke[name], canSteer: true };
     const verified = { ...manifest, smoke, packaging: await packagingDigest() };
-    writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(verified, null, 2) + "\n");
+    saveManifest(join(output, "assembly-adapters-" + target + ".json"), verified);
     console.log(JSON.stringify(verified, null, 2));
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(scratch, removeTemporary);
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -1,4 +1,4 @@
-//! Tests for growing a row in place (docs/behavior/g0-shape.md).
+//! Tests for growing a row in place (G0 shape: behavior list, https://app.notion.com/p/409394b0689d815fba58f8f372f1cc20).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

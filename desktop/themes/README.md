@@ -116,7 +116,7 @@ Exceptions in the approved look (Assembly, Assembly Glass, Assembly Light):
 ## The four old themes (Houston, Dracula, Tokyo Night, Graphite)
 
 Each role takes the old theme's colour from themeRegistry.ts, by the 2026-10-26 table
-(docs/plans/2026-10-26/implementation-plan.md, "The design system's roles on the old names"):
+(Assembly: implementation plan, https://app.notion.com/p/409394b0689d816c9142c5896a64b025, "The design system's roles on the old names"):
 
 | Role | Old name |
 | --- | --- |

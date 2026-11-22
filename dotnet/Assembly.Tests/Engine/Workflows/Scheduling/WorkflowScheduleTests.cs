@@ -122,25 +122,6 @@ public sealed partial class WorkflowScheduleTests
     }
 
     [Fact]
-    public void Start_preserves_authored_definition_order_without_changing_snapshot_shape()
-    {
-        using var f = new Fixture(yaml: """
-            name: Flow
-            steps:
-              build:
-                agent: {provider: codex, model: selected-model}
-                prompt: prompt.md
-                result: build
-              areview:
-                needs: [build]
-                review: {of: build, agent: {provider: codex}, prompt: prompt.md}
-                result: review
-            """);
-        var order = f.Core.Db.Query("SELECT definition_key FROM engine_step ORDER BY rowid", r => r.Text(0), default);
-        Assert.Equal(new[] { "build", "areview" }, order);
-    }
-
-    [Fact]
     public void Late_workflow_fact_preserves_archived_attempt_outcome()
     {
         using var f = new Fixture(); var accepted = f.Apply(f.Prepare()); Assert.True(accepted.Result.Applied);

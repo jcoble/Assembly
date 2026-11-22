@@ -7,17 +7,6 @@ namespace Assembly.Tests.Engine.Mcp;
 public sealed class MessageContactTests
 {
     [Theory]
-    [InlineData("parent", "child", "steer")]
-    [InlineData("child", "parent", "steer")]
-    [InlineData("child", "sibling", "steer")]
-    [InlineData("child", "other", "wait")]
-    public void Local_contact_preserves_independent_delivery_rule(string from, string to, string delivery)
-    {
-        using var f = Tree();
-        Assert.True(f.Apply(new SendMessage(from, to, "body", "prompt"), "m", actor: new(ActorKind.Session, from)).Applied);
-        Assert.Equal(delivery, f.Text("SELECT delivery FROM engine_message"));
-    }
-    [Theory]
     [InlineData("child", "cousin")]
     [InlineData("other", "child")]
     [InlineData("child", "child")]

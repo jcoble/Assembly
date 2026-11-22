@@ -1,5 +1,5 @@
 //! The lag meter, on only with `ASSEMBLY_METER=<csv path>`, like the spike's. That variable is the soak switch too: a
-//! soak is a long run with the meter on, driven from outside the window (implementation-plan.md, the soak script).
+//! soak is a long run with the meter on, driven from outside the window (Assembly: implementation plan, https://app.notion.com/p/409394b0689d816c9142c5896a64b025, the soak script).
 //! When it's off nothing of it runs. Its columns are the spike meter's (spike/gpui src/meter.rs) with `footprint_mb`
 //! added at the end, so numbers compare with the spike's baseline column for column.
 

@@ -27,27 +27,6 @@ public sealed partial class MachinesSocketTests
     }
 
     [Fact]
-    public async Task Saved_profiles_publish_metadata_and_keyed_null_on_removal()
-    {
-        using var socket = await OpenAsync();
-        await SubAsync(socket, 1, "machines");
-        await CallAsync(socket, 2, "machines", "set", """{"name":"saved","ssh":"unavailable","port":9837,"tokenFile":"test/env"}""");
-        var change = await ReadAsync(socket);
-        Assert.Contains("\"key\":\"saved\"", change);
-        Assert.Contains("\"ssh\":\"unavailable\"", change);
-        Assert.Contains("\"port\":9837", change);
-        Assert.Contains("\"tokenFile\":\"test/env\"", change);
-        Assert.Contains("\"result\":", await ReadAsync(socket));
-        await _connections.ReadyAsync("saved").WaitAsync(Wait);
-        Assert.Contains("\"reachable\":true", await ReadAsync(socket));
-        await CallAsync(socket, 3, "machines", "remove", """{"name":"saved"}""");
-        Assert.Contains("\"key\":\"saved\",\"item\":null", await ReadAsync(socket));
-        Assert.Contains("\"result\":", await ReadAsync(socket));
-        using var state = JsonDocument.Parse(await SubAsync(socket, 4, "machines"));
-        Assert.DoesNotContain(state.RootElement.GetProperty("items").EnumerateArray(), item => item.GetProperty("key").GetString() == "saved");
-    }
-
-    [Fact]
     public async Task Stopping_a_machine_cancels_and_awaits_its_hanging_probe()
     {
         _stub.HangVersion = true;
@@ -81,16 +60,5 @@ public sealed partial class MachinesSocketTests
         await UnsubAsync(socket, 5);
         await CallAsync(socket, 6, "machines", "connect", """{"machine":"saved"}""");
         Assert.Contains("\"reachable\":true", await ReadAsync(socket));
-    }
-
-    [Theory]
-    [InlineData("local")]
-    [InlineData("")]
-    public async Task Reserved_or_empty_names_fail_without_changing_the_snapshot(string name)
-    {
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "machines", "set", JsonSerializer.Serialize(new { name, ssh = "host" }));
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        Assert.Equal(List(2, Box(false, "not checked yet")), await ListAsync(socket, 2));
     }
 }

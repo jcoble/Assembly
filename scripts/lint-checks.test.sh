@@ -140,12 +140,14 @@ done
 rm -rf "$r"
 
 # The two .NET checks fail on a probe in a scratch copy. In the commit hook (LINT_STAGED_ONLY=1) each skips a commit
-# with no .NET file in it, and runs on a .cs change.
+# with no .NET file in it, and runs on a .cs change. dotnet format then checks only the projects that hold the changed
+# files: the staged ones in the hook, the ones changed against LINT_BASE on a pull request.
 r=$(dotnet_repo_with 50-dotnet-format.sh) || exit 1
-expect 0 "dotnet format: the prospective tree passes" "$r" 50-dotnet-format.sh
-# The probe cases need only the project the probe is in (Assembly.Domain references nothing), not the whole solution.
+# These cases need only the project the probe is in (Assembly.Domain references nothing), not the whole solution:
+# CI's lint job checks the whole tree.
 sed -i '/<Project /{/Assembly\.Domain\//!d}' "$r/dotnet/Assembly.slnx"
 commit_all "$r"
+expect 0 "dotnet format: the prospective tree passes" "$r" 50-dotnet-format.sh
 printf 'namespace Assembly.Domain;\n\npublic static class FormatProbe\n{\n        public static int One() => 1;\n}\n' \
   >"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 expect 1 "dotnet format: a badly indented file fails" "$r" 50-dotnet-format.sh
@@ -154,6 +156,26 @@ echo note >"$r/notes.md"
 LINT_STAGED_ONLY=1 expect 0 "dotnet format: the hook skips a commit with nothing under dotnet/" "$r" 50-dotnet-format.sh
 echo '// touched' >>"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 LINT_STAGED_ONLY=1 expect 1 "dotnet format: the hook runs on a .cs change" "$r" 50-dotnet-format.sh
+commit_all "$r"
+# A second, clean project beside the badly indented FormatProbe.cs in Assembly.Domain.
+mkdir "$r/dotnet/Other"
+printf '<Project Sdk="Microsoft.NET.Sdk" />\n' >"$r/dotnet/Other/Other.csproj"
+printf 'namespace Other;\n\npublic static class Clean\n{\n    public static int One() => 1;\n}\n' >"$r/dotnet/Other/Clean.cs"
+sed -i 's#</Solution>#  <Project Path="Other/Other.csproj" />\n</Solution>#' "$r/dotnet/Assembly.slnx"
+commit_all "$r"
+echo '// touched' >>"$r/dotnet/Other/Clean.cs"
+LINT_STAGED_ONLY=1 expect 0 "dotnet format: the hook checks only the project of a staged file" "$r" 50-dotnet-format.sh
+commit_all "$r"
+LINT_BASE=$(git -C "$r" rev-parse HEAD~1) expect 0 "dotnet format: a pull request checks only the projects changed against its base" "$r" 50-dotnet-format.sh
+expect 1 "dotnet format: with neither the hook nor a base it checks the whole solution" "$r" 50-dotnet-format.sh
+echo '// touched' >>"$r/dotnet/Assembly.Domain/FormatProbe.cs"
+commit_all "$r"
+LINT_BASE=$(git -C "$r" rev-parse HEAD~1) expect 1 "dotnet format: a pull request fails on a project it changed" "$r" 50-dotnet-format.sh
+echo '# touched' >>"$r/dotnet/.editorconfig"
+LINT_STAGED_ONLY=1 expect 1 "dotnet format: a staged .editorconfig widens the hook to the whole solution" "$r" 50-dotnet-format.sh
+commit_all "$r"
+git -C "$r" rm -q dotnet/Assembly.Domain/FormatProbe.cs
+LINT_STAGED_ONLY=1 expect 0 "dotnet format: a deleted file is not checked" "$r" 50-dotnet-format.sh
 rm -rf "$r"
 
 r=$(dotnet_repo_with 70-architecture.sh) || exit 1

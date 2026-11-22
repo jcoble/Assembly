@@ -30,8 +30,10 @@ export function validate(value: any, sha: string): Result {
     throw Error('Invalid proof budget');
   return value;
 }
-export function verdict(result: Result, uploaded: Record<string, string>, codeChanged=false, receiptsValid=true): Verdict {
-  const needsTests = result.behaviors.some(b=>b.state === 'PASS') ||
+// A PR that adds or changes a test (a bug fix, or one of the three kinds in AGENTS.md) needs the verifier's receipt for it,
+// and so does a NOT AFFECTED claim on code. A PASS on a PR that changes no test rests on the window check alone.
+export function verdict(result: Result, uploaded: Record<string, string>, codeChanged=false, receiptsValid=true, testsChanged=false): Verdict {
+  const needsTests = (testsChanged && result.behaviors.some(b=>b.state === 'PASS')) ||
     (codeChanged && result.behaviors.every(b=>b.state === 'NOT AFFECTED'));
   const failed = !receiptsValid || (needsTests && result.tests.length === 0) ||
     result.tests.some(t=>!t.receipt || !uploaded[t.receipt]) || result.behaviors.some(b=>b.state === 'FAIL') ||

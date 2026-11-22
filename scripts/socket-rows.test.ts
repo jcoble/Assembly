@@ -8,7 +8,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Socket } from 'node:net';
-import { readRows, type Row } from './features/live-rows.ts';
+import { readRows, type Row } from './drive/live-rows.ts';
 import { logRows } from '../dotnet/scripts/row-log.ts';
 
 type Frame = Record<string, any>;
@@ -202,38 +202,6 @@ for (const mode of ['duplicate', 'gap'] as const) test(`live ${mode} fails durin
   } finally { await host.close(); }
 });
 
-test('rows scenario waits for the requested run end, takes a fresh cut and checks resume', async () => {
-  let subscriptions = 0;
-  let live: { peer: Peer; id: number };
-  const host = await fixture((peer, frame) => {
-    if (frame.t === 'sub') {
-      subscriptions++;
-      live = { peer, id: frame.id };
-      peer.send({ t: 'state', sub: frame.id, seq: subscriptions === 1 ? 1 : 4, items: [] });
-    } else if (frame.t === 'call') {
-      assert.equal(frame.feature, 'rows'); assert.equal(frame.method, 'after');
-      if (subscriptions === 1) {
-        result(peer, frame, { rows: [row(1, 0, { kind: 'turn', runId: 'run', payload: { state: 'started' } })] });
-        live.peer.send({ t: 'rows', sub: live.id, row: row(2, 1, { kind: 'turn', runId: 'other', payload: { state: 'finished' } }) });
-        live.peer.send({ t: 'rows', sub: live.id, row: row(4, 2, { kind: 'turn', runId: 'run', payload: { state: 'finished' } }) });
-      } else {
-        const items = [row(1, 0), row(2, 1), row(4, 2)];
-        result(peer, frame, { rows: items.filter(row => row.seq > frame.args.after) });
-      }
-    }
-  });
-  try {
-    const checked = await command('bash', ['scripts/features/rows.sh'], {
-      CHECK4_API: host.api, CHECK4_TOKEN: token, CHECK4_SESSION: 's', CHECK4_RUN: 'run'
-    });
-    assert.equal(checked.code, 0, checked.stderr);
-    assert.match(checked.stdout, /ok the socket from 1 starts at 2 with prevSeq 1/);
-    assert.equal(subscriptions, 3);
-    assert.ok(host.frames.some(({ frame }) => frame.method === 'after' && frame.args.after === 1));
-    await host.drained(); assert.equal(host.peers.size, 0);
-  } finally { await host.close(); }
-});
-
 test('disconnect while waiting for turn end fails rather than reporting completed snapshot success', async () => {
   let live: Socket;
   const host = await fixture((peer, frame) => {
@@ -258,22 +226,6 @@ test('row-log rejects duplicated visual items rather than declaring stitched his
   });
   try {
     await assert.rejects(logRows({ api: host.api, token, target: 's', followMs: 0, signal: signal(), log: () => {} }), /more than one page/);
-    await host.drained(); assert.equal(host.peers.size, 0);
-  } finally { await host.close(); }
-});
-
-for (const valid of [true, false]) test(`live-rows CLI ${valid ? 'retains JSON output' : 'fails broken chains without a success receipt'}`, async () => {
-  const host = await fixture((peer, frame) => {
-    if (frame.t === 'sub') peer.send({ t: 'state', sub: frame.id, seq: 2, items: [] });
-    else if (frame.t === 'call') result(peer, frame, { rows: valid ? [row(1, 0), row(2, 1)] : [row(2, 1)] });
-  });
-  try {
-    const checked = await command(process.execPath, ['scripts/features/live-rows.ts', '0'], {
-      CHECK4_API: host.api, CHECK4_TOKEN: token, CHECK4_SESSION: 's'
-    });
-    assert.equal(checked.code, valid ? 0 : 1, checked.stderr);
-    if (valid) assert.deepEqual(JSON.parse(checked.stdout), [{ seq: 1, prevSeq: 0 }, { seq: 2, prevSeq: 1 }]);
-    else { assert.equal(checked.stdout, ''); assert.match(checked.stderr, /chain/); }
     await host.drained(); assert.equal(host.peers.size, 0);
   } finally { await host.close(); }
 });

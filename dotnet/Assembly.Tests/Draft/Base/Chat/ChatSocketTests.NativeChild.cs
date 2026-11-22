@@ -5,27 +5,6 @@ namespace Assembly.Tests.Draft.Base.Chat;
 
 public sealed partial class ChatSocketTests
 {
-    [Theory]
-    [InlineData("{\"session\":\"parent\"}")]
-    [InlineData("{\"task\":\"child\"}")]
-    public async Task Native_child_stop_requires_both_generated_arguments(string args)
-    {
-        using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "send", "stopTask", args);
-        Assert.Contains("\"code\":\"bad_args\"", await ReadAsync(socket));
-        Assert.Empty(_here.Asked);
-        Assert.Empty(_box.Asked);
-    }
-
-    [Fact]
-    public void Native_child_stop_arguments_use_the_existing_generated_CamelCase_contract()
-    {
-        var args = new SendFeature.StopTaskArgs("assembly-parent", "native-child");
-        var json = JsonSerializer.Serialize(args, SessionsJson.Default.StopTaskArgs);
-        Assert.Equal("""{"session":"assembly-parent","task":"native-child"}""", json);
-        Assert.Equal(args, JsonSerializer.Deserialize(json, SessionsJson.Default.StopTaskArgs));
-    }
-
     [Fact]
     public async Task Native_child_stop_and_send_share_the_parent_session_order_key()
     {

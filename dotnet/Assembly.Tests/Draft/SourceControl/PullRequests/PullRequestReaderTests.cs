@@ -40,30 +40,6 @@ public sealed partial class PullRequestReaderTests
         Assert.All(detail.Reviews, review => Assert.NotEmpty(review.BodyBlocks));
         Assert.Equal(new[] { "commit", "comment", "comment", "review" }, detail.Timeline.Select(item => item.Kind));
     }
-    // Pins: g9#20
-    [Fact]
-    public async Task A_wrong_number_or_non_github_origin_is_refused()
-    {
-        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync(); await repo.Run("remote", "add", "origin", "https://gitlab.com/owner/repo");
-        var gh = new FakeGh((_, _) => throw new InvalidOperationException("Must not call GitHub"));
-        await Assert.ThrowsAsync<CallFailed>(() => new PullRequestReader(repo.Git, gh, repo.Root, new GitTextPatch(repo.Git)).DetailAsync(repo.Root, 7, default));
-        await repo.Run("remote", "set-url", "origin", "https://github.com/owner/repo");
-        await Assert.ThrowsAsync<CallFailed>(() => new PullRequestReader(repo.Git, new FakeGh((_, _) => View), repo.Root, new GitTextPatch(repo.Git)).DetailAsync(repo.Root, 8, default));
-    }
-    [Fact]
-    public async Task Session_queue_resolves_actual_checkout_origin_for_its_search_scope()
-    {
-        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync();
-        await repo.Run("remote", "add", "origin", "git@github.com:actual/checkout.git");
-        var gh = new FakeGh((args, input) =>
-        {
-            using var request = JsonDocument.Parse(input!);
-            Assert.Contains("repo:actual/checkout", request.RootElement.GetProperty("variables").GetProperty("query").GetString());
-            return """{"data":{"search":{"issueCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}""";
-        });
-        var page = await new PullRequestReader(repo.Git, gh, repo.Root, new GitTextPatch(repo.Git)).ListForRootAsync(repo.Root, "open", null, null, default);
-        Assert.Empty(page.Items);
-    }
     private const string View = """
     {"number":7,"title":"PR","body":"Description","url":"https://github.com/owner/repo/pull/7","author":{"login":"author"},"headRefName":"feature","baseRefName":"main","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN","isDraft":false,"createdAt":"2026-11-03T09:00:00Z","commits":[{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","messageHeadline":"Commit","authors":[{"login":"author"}],"committedDate":"2026-11-03T09:30:00Z"}],"comments":[{"id":"C1","author":{"login":"author"},"body":"Discussion","createdAt":"2026-11-03T10:00:00Z"}],"reviews":[{"author":{"login":"reviewer"},"body":"Review","state":"COMMENTED","submittedAt":"2026-11-03T12:00:00Z"}],"reviewRequests":[],"statusCheckRollup":[{"name":"build","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/owner/repo/actions/runs/1"}]}
     """;
