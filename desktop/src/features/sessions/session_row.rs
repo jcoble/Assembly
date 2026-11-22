@@ -1,7 +1,7 @@
 //! `SessionRow` is one session in the rail, on the shared three-line row, as the look's session row: its state's
 //! glyph (a shape as well as a colour), then its title with how long it has run or its age, and an arrow when the row
-//! has something to open; its provider's glyph and its machine, then the remote machine's name and branch, all
-//! spelled out in a tooltip; and its newest text, one line, or its project before it has any. A row that needs you
+//! has something to open; its provider's glyph, then its machine's icon and name ("This Mac" for a local one), all
+//! spelled out with the branch in a tooltip; and its newest text, one line, or its project before it has any. A row that needs you
 //! is outlined in amber; the selected row gets the selected fill and line. The right-click menu moves it between Working and Done or
 //! settles it (`sessions/mark`), and copies its link, saying what that link does while the pointer rests on it.
 
@@ -70,9 +70,14 @@ pub fn status_words(presence: Presence, offline: bool) -> Vec<&'static str> {
     words
 }
 
-/// The rest of a row's second line: "Workbox Test · lane/rail". A local session is on This Mac.
+/// The machine a row's session is on, by name; a local session is on This Mac.
+fn machine_name(entry: &RailEntry) -> String {
+    entry.machine.clone().unwrap_or_else(|| "This Mac".into())
+}
+
+/// The rest of a row's spelled-out line: "Workbox Test · lane/rail".
 pub fn details(entry: &RailEntry) -> String {
-    let mut parts = vec![entry.machine.clone().unwrap_or_else(|| "This Mac".into())];
+    let mut parts = vec![machine_name(entry)];
     parts.extend(entry.branch.clone().filter(|branch| !branch.is_empty()));
     parts.join(" · ")
 }
@@ -177,8 +182,8 @@ impl RenderOnce for SessionRow {
             time,
             arrow,
             icons: vec![provider, machine],
-            // The second line names the machine: a remote one by name, while the icon alone says This Mac.
-            second: entry.machine.clone().unwrap_or_default().into(),
+            // The second line names the machine after its icon, "This Mac" for a local one, as the look's row does.
+            second: machine_name(&entry).into(),
             spelled_out,
             // Always a third line, so every row is the same height: its newest answer, or its project before it has one.
             third: entry
