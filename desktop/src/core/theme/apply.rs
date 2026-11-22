@@ -8,6 +8,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use gpui_kit::base::Spring;
+use gpui_kit::base::input::CursorBlink;
 use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{App, Window, WindowBackgroundAppearance};
 
@@ -20,6 +21,10 @@ pub const THEMES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
 
 /// The design system's slowest motion, which the kit's slow step and move spring are brought down to.
 const MOTION_CEILING: Duration = Duration::from_millis(180);
+
+/// How long a focused field's caret keeps blinking after the last keystroke, click or focus before it holds still.
+/// Each blink repaints the whole window, so a caret that blinks forever keeps an idle window busy.
+const CARET_REST: Duration = Duration::from_secs(5);
 
 /// Watches the theme folder `dir` and calls `on_ready` once the files have loaded. The kit calls it exactly once,
 /// from the one-off load task (registry.rs:105-115); a later file change only reloads (registry.rs:224-227). The
@@ -39,9 +44,9 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
 
 /// Puts `id` in force: makes its file the kit's active theme, reads its file's `assembly` section for the look's own
 /// tokens (look.rs), sets the window background to blurred for glass and opaque for the rest, brings the kit's 280 ms
-/// slow step and move spring down to 180 ms, and starts the fade from the old theme (fade.rs). Off macOS there's no
-/// blur, so the window stays opaque and the look draws its glass solid. A theme whose file didn't load leaves the
-/// theme in force as it is.
+/// slow step and move spring down to 180 ms, lets a focused field's caret rest after `CARET_REST`, and starts the fade
+/// from the old theme (fade.rs). Off macOS there's no blur, so the window stays opaque and the look draws its glass
+/// solid. A theme whose file didn't load leaves the theme in force as it is.
 /// The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme` and a light one in
 /// `light_theme`, and switches to its mode (schema.rs:1064-1103).
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
@@ -65,6 +70,8 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
         theme.motion.spring_move = Spring::new(MOTION_CEILING)
             .with_damping(0.85)
             .with_epsilon(0.1);
+        // The kit's 500 ms blink while someone is typing, then a steady caret, so an idle window draws nothing.
+        theme.cursor_blink = CursorBlink::default().with_idle_timeout(CARET_REST);
     });
     // A fade only between two of our themes with different grounds: not at the window's first `set` (from the kit's
     // default), not when the theme in force is set again, and not to a ThemeMirror entry, whose ground is Assembly's.
