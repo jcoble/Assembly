@@ -109,6 +109,72 @@ impl FileView {
                 .to_string(),
         )
     }
+
+    /// The file's actions as quiet worded buttons: Save (Check save while the last save's result is unknown), Close,
+    /// Reload, Compare, Overwrite while a comparison is open, and History when the file has any.
+    fn actions(&self, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .flex_none()
+            .ml_auto()
+            .gap(SPACE[3])
+            .child(
+                quiet_text_button(
+                    "file-save",
+                    if self
+                        .save
+                        .as_ref()
+                        .is_some_and(|s| s.state == SaveState::Unknown)
+                    {
+                        "Check save"
+                    } else {
+                        "Save"
+                    },
+                    cx,
+                )
+                .disabled(self.saving.is_some() || self.document.is_none() || self.locked)
+                .on_click(cx.listener(|view, _, _, cx| view.save_document(cx))),
+            )
+            .child(
+                quiet_text_button("file-close", "Close", cx)
+                    .disabled(self.saving.is_some())
+                    .on_click(cx.listener(|view, _, window, cx| view.request_close(window, cx))),
+            )
+            .child(
+                quiet_text_button("file-reload", "Reload", cx)
+                    .disabled(self.document.is_none() || self.saving.is_some())
+                    .on_click(cx.listener(|view, _, window, cx| view.request_reload(window, cx))),
+            )
+            .child(
+                quiet_text_button("file-compare", "Compare", cx)
+                    .disabled(self.document.is_none() || self.saving.is_some() || self.locked)
+                    .on_click(cx.listener(|view, _, _, cx| view.compare_document(cx))),
+            )
+            .when(self.comparison.is_some(), |row| {
+                row.child(
+                    quiet_text_button("file-overwrite", "Overwrite", cx)
+                        .disabled(self.saving.is_some() || self.locked)
+                        .on_click(
+                            cx.listener(|view, _, window, cx| view.request_overwrite(window, cx)),
+                        ),
+                )
+            })
+            .when(self.has_history(), |row| {
+                row.child(
+                    quiet_text_button(
+                        "file-history",
+                        if self.history_shown {
+                            "Hide history"
+                        } else {
+                            "History"
+                        },
+                        cx,
+                    )
+                    .debug_selector(|| "file-history".into())
+                    .disabled(self.document.is_none())
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
+                )
+            })
+    }
 }
 
 impl Render for FileView {
@@ -142,92 +208,40 @@ impl Render for FileView {
             .size_full()
             // The file's crumb, as the chat's: 46 high under a hairline, the path as the kit's breadcrumb (its folder
             // in text-3, the name in text-1 at 600), what is happening to it in Meta, then its actions as quiet
-            // worded buttons.
+            // worded buttons at the right. Each part takes the width its words measure; when the tab is too narrow
+            // for both, the buttons move to a second line rather than being cut, and only then does the folder
+            // shorten.
             .child(
                 h_flex()
                     .flex_none()
-                    .h(CRUMB_HEIGHT)
-                    .gap(SPACE[3])
+                    .flex_wrap()
+                    .min_h(CRUMB_HEIGHT)
+                    .py(SPACE[2])
+                    .gap_x(SPACE[3])
+                    .gap_y(SPACE[2])
                     .pl(SPACE[6])
                     .pr(SPACE[3])
                     .border_b_1()
                     .border_color(look.hairline)
                     .text_role(TextRole::Body, cx)
                     .text_color(look.text_2)
-                    .child(crumb(&self.path, cx))
                     .child(
                         h_flex()
-                            .flex_none()
-                            .gap(SPACE[2])
-                            .text_role(TextRole::Meta, cx)
-                            .text_color(look.text_3)
-                            .children(self.status_words())
-                            .when(dirty, |row| row.child("Unsaved")),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        quiet_text_button(
-                            "file-save",
-                            if self
-                                .save
-                                .as_ref()
-                                .is_some_and(|s| s.state == SaveState::Unknown)
-                            {
-                                "Check save"
-                            } else {
-                                "Save"
-                            },
-                            cx,
-                        )
-                        .disabled(self.saving.is_some() || self.document.is_none() || self.locked)
-                        .on_click(cx.listener(|view, _, _, cx| view.save_document(cx))),
-                    )
-                    .child(
-                        quiet_text_button("file-close", "Close", cx)
-                            .disabled(self.saving.is_some())
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.request_close(window, cx)),
+                            .flex_grow(1.)
+                            .min_w_0()
+                            .gap(SPACE[3])
+                            .child(crumb(&self.path, cx))
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .gap(SPACE[2])
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(look.text_3)
+                                    .children(self.status_words())
+                                    .when(dirty, |row| row.child("Unsaved")),
                             ),
                     )
-                    .child(
-                        quiet_text_button("file-reload", "Reload", cx)
-                            .disabled(self.document.is_none() || self.saving.is_some())
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.request_reload(window, cx)),
-                            ),
-                    )
-                    .child(
-                        quiet_text_button("file-compare", "Compare", cx)
-                            .disabled(
-                                self.document.is_none() || self.saving.is_some() || self.locked,
-                            )
-                            .on_click(cx.listener(|view, _, _, cx| view.compare_document(cx))),
-                    )
-                    .when(self.comparison.is_some(), |row| {
-                        row.child(
-                            quiet_text_button("file-overwrite", "Overwrite", cx)
-                                .disabled(self.saving.is_some() || self.locked)
-                                .on_click(cx.listener(|view, _, window, cx| {
-                                    view.request_overwrite(window, cx)
-                                })),
-                        )
-                    })
-                    .when(self.has_history(), |row| {
-                        row.child(
-                            quiet_text_button(
-                                "file-history",
-                                if self.history_shown {
-                                    "Hide history"
-                                } else {
-                                    "History"
-                                },
-                                cx,
-                            )
-                            .debug_selector(|| "file-history".into())
-                            .disabled(self.document.is_none())
-                            .on_click(cx.listener(|view, _, _, cx| view.toggle_history(cx))),
-                        )
-                    }),
+                    .child(self.actions(cx)),
             )
             .children(self.lock_banner(cx))
             .children(status.map(|text| {

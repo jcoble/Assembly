@@ -202,18 +202,11 @@ impl ChangesPane {
         let pending = if stack { self.working.pending() } else { 0 };
         let refreshing = self.status.read(cx).reading();
         let mode = self.mode;
-        // The tab's crumb, as the chat's and a file's: 46 high under a hairline. What is shown, its folder in
-        // text-3, the line counts in the diff colours, then how to show it and Refresh at the right.
-        h_flex()
-            .flex_none()
-            .min_h(CRUMB_HEIGHT)
-            .pl(SPACE[6])
-            .pr(SPACE[3])
+        // What is shown, its folder in text-3, the line counts in the diff colours, and how far the reading has got.
+        let about = h_flex()
+            .flex_grow(1.)
+            .min_w_0()
             .gap(SPACE[5])
-            .border_b_1()
-            .border_color(look.hairline)
-            .text_role(TextRole::Body, cx)
-            .text_color(look.text_1)
             .children(label.map(|label| div().flex_none().child(label)))
             .children(stack.then(|| self.scope_menu(cx)))
             .children(folder.map(|folder| {
@@ -250,8 +243,12 @@ impl ChangesPane {
                         "Reading {pending} more {}…",
                         if pending == 1 { "file" } else { "files" }
                     ))
-            }))
-            .child(div().flex_1())
+            }));
+        // How to show it, then Refresh.
+        let controls = h_flex()
+            .flex_none()
+            .ml_auto()
+            .gap(SPACE[5])
             .child(
                 TabBar::new("changes-mode")
                     .segmented()
@@ -273,7 +270,25 @@ impl ChangesPane {
                     .tooltip("Refresh changes")
                     .disabled(refreshing)
                     .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx)))
-            }))
+            }));
+        // The tab's crumb, as the chat's and a file's: 46 high under a hairline, the controls at the right. Each part
+        // takes the width its words measure; when the tab is too narrow for both, the controls move to a second line
+        // rather than being cut, and only then does the folder shorten.
+        h_flex()
+            .flex_none()
+            .flex_wrap()
+            .min_h(CRUMB_HEIGHT)
+            .py(SPACE[2])
+            .pl(SPACE[6])
+            .pr(SPACE[3])
+            .gap_x(SPACE[5])
+            .gap_y(SPACE[2])
+            .border_b_1()
+            .border_color(look.hairline)
+            .text_role(TextRole::Body, cx)
+            .text_color(look.text_1)
+            .child(about)
+            .child(controls)
     }
     fn stack(&self, cx: &mut Context<Self>) -> Diff {
         let both = self.both.clone();
