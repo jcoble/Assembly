@@ -13,9 +13,10 @@ internal sealed record SettingsState(
 /// <summary>
 /// One top-level summary of what needs the user right now, plus whether Assembly is working on its own
 /// (<see cref="Working"/>, for the Home button's progress ring) and whether the user is needed
-/// (<see cref="NeedsUser"/>, for turning the Home button amber).
+/// (<see cref="NeedsUser"/>, for turning the Home button amber). <see cref="RestartVersion"/> travels
+/// alongside every kind so a staged restart is never hidden by another need.
 /// </summary>
-internal sealed record SettingsSummary(string Kind, string Message, bool Working = false, bool NeedsUser = false)
+internal sealed record SettingsSummary(string Kind, string Message, bool Working = false, bool NeedsUser = false, string? RestartVersion = null)
 {
     internal const string Nothing = "nothing";
     internal const string RestartToFinish = "restart_to_finish";

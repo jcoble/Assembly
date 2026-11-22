@@ -412,6 +412,50 @@ public sealed class SettingsStateSocketTests
         }
     }
 
+    // A staged restart stays visible alongside a provider problem: the summary names the problem
+    // and still carries the restart version, so the panel can offer Restart next to it.
+    [Fact]
+    public async Task A_staged_restart_is_carried_alongside_a_provider_problem()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("assembly-settings-restart-").FullName;
+        var dbPath = Path.Combine(tempRoot, "assembly.db");
+        var topics = new TopicSet();
+        var db = AppDatabase.Open(dbPath, TimeProvider.System, topics);
+        EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
+        var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
+        var status = new MachineStatus(topics, []);
+        var sessions = SessionStore.Open(db, TimeProvider.System, Path.Combine(tempRoot, "sessions"));
+        var machinesFeature = new MachinesFeature(new MachineSet(new FakeMachine(null, sessions)), status, () => { }, TimeProvider.System);
+        // An enabled provider whose descriptor is invalid (no command): a problem on this machine.
+        var launcher = new FakeLauncher
+        {
+            Agents = [new("claude", "Claude Code", "", [], null, VendorFamily: "claude")]
+        };
+        new ProviderEnablementStore(db, TimeProvider.System).SetEnabled("claude", true);
+        var feature = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, "local-engine", TimeProvider.System);
+        var registry = new TopicCaptureRegistry();
+        feature.Register(registry);
+        var ownerCall = new CallContext(CancellationToken.None, "owner", Peer: new OwnerPeer());
+        try
+        {
+            status.RestartReady("9.9.9");
+            var states = (IReadOnlyList<SettingsState>)registry.ReadState!(null, ownerCall);
+            var json = JsonSerializer.Serialize(Assert.Single(states), SettingsStateJson.Default.SettingsState);
+            using var parsed = JsonDocument.Parse(json);
+            var summary = parsed.RootElement.GetProperty("summary");
+            Assert.Equal(SettingsSummary.Problem, summary.GetProperty("kind").GetString());
+            Assert.Equal("9.9.9", summary.GetProperty("restartVersion").GetString());
+        }
+        finally
+        {
+            await feature.DisposeAsync();
+            await machinesFeature.DisposeAsync();
+            await work.DisposeAsync();
+            db.Dispose();
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
     private sealed class FailingInstallShell(string workingDirectory, string secret) : RemoteReleaseShell
     {
         internal override Task<string> RunAsync(string target, string command, Action<string>? line, CancellationToken ct) =>

@@ -29,6 +29,8 @@ const WIDTH: Pixels = px(360.);
 /// Past this the panel scrolls inside, so it never runs off a short window.
 const MAX_HEIGHT: Pixels = px(560.);
 
+/// The drop-down a press on Home opens: the summary top line, then providers and machines, all
+/// read from the backend's pushed `settings_state`; it computes nothing itself.
 pub struct HomePanel {
     /// The last pushed answer; `None` until the first one comes.
     pub(super) state: Option<SettingsState>,
@@ -149,7 +151,8 @@ impl HomePanel {
         }));
     }
 
-    /// The top line: the backend's sentence for what needs the user, with one button when a restart is ready.
+    /// The top line: the backend's sentence for what needs the user, with the Restart button beside
+    /// it whenever a staged update is waiting — including when the sentence is about something else.
     fn summary(&self, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let Some(state) = &self.state else {
@@ -165,7 +168,7 @@ impl HomePanel {
             .min_w_0()
             .text_role(TextRole::Title, cx)
             .text_color(color);
-        if summary.kind == "restart_to_finish" {
+        if summary.restart_version.is_some() || summary.kind == "restart_to_finish" {
             let restarting = self.restarting
                 || state.machines.iter().any(|machine| {
                     machine.key == "local" && machine.update_state.as_deref() == Some("restarting")

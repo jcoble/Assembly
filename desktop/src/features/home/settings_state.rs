@@ -27,6 +27,9 @@ pub struct Summary {
     pub working: bool,
     /// True only when something needs the user; turns the Home button amber.
     pub needs_user: bool,
+    /// The staged update's version when a restart would finish it, whatever the top line is about;
+    /// the panel shows Restart beside any summary while this is set.
+    pub restart_version: Option<String>,
 }
 
 /// One provider across every machine.

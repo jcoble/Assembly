@@ -223,6 +223,11 @@ internal static class SettingsStateRules
             || machines.Any(m => m.UpdateState is MachineUpdateState.Updating or MachineUpdateState.Restarting)
             || providers.Any(p => p.Enabled && p.Machines.Any(m =>
                 m.SignInState is ProviderSignInState.Checking or ProviderSignInState.SigningIn));
+        // The staged restart travels with every summary kind: it must stay visible alongside a
+        // provider problem or a sign-in warning, never hidden behind either.
+        var restartVersion = machines.FirstOrDefault(m => m.Machine.Name is null)?.Machine.RestartReady;
+        SettingsSummary Summary(string kind, string message, bool needsUser) =>
+            new(kind, message, working, needsUser, restartVersion);
 
         // 1. Problem: provider problem or update/restart failure; offline/disconnected machines are skipped.
         var problemProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.Problem).ToArray();
@@ -233,10 +238,10 @@ internal static class SettingsStateRules
             var where = badMachine is not null && machineLabels.TryGetValue(badMachine.MachineKey, out var label)
                 ? $" on {label}"
                 : "";
-            return new SettingsSummary(SettingsSummary.Problem, $"{provider.Name} has a problem{where}.", working, NeedsUser: true);
+            return Summary(SettingsSummary.Problem, $"{provider.Name} has a problem{where}.", needsUser: true);
         }
         if (problemProviders.Length > 1)
-            return new SettingsSummary(SettingsSummary.Problem, $"{problemProviders.Length} providers have problems.", working, NeedsUser: true);
+            return Summary(SettingsSummary.Problem, $"{problemProviders.Length} providers have problems.", needsUser: true);
 
         var failedMachine = machines.FirstOrDefault(m => m.UpdateState == MachineUpdateState.Failed);
         if (failedMachine is not null)
@@ -244,7 +249,7 @@ internal static class SettingsStateRules
             var action = failedMachine.Machine.RestartNote is not null && failedMachine.Machine.UpdateNote is null
                 ? "Restart"
                 : "Update";
-            return new SettingsSummary(SettingsSummary.Problem, $"{action} failed on {failedMachine.DisplayName}.", working, NeedsUser: true);
+            return Summary(SettingsSummary.Problem, $"{action} failed on {failedMachine.DisplayName}.", needsUser: true);
         }
 
         // 2. Needs sign-in.
@@ -254,28 +259,27 @@ internal static class SettingsStateRules
             var provider = signInProviders[0];
             var needing = provider.Machines.Where(m => m.State == ProviderRowState.NeedsSignIn).ToArray();
             if (needing.Length == 1 && machineLabels.TryGetValue(needing[0].MachineKey, out var label))
-                return new SettingsSummary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {label}.", working, NeedsUser: true);
+                return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {label}.", needsUser: true);
             if (needing.Length > 1)
-                return new SettingsSummary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {needing.Length} machines.", working, NeedsUser: true);
-            return new SettingsSummary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in.", working, NeedsUser: true);
+                return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in on {needing.Length} machines.", needsUser: true);
+            return Summary(SettingsSummary.NeedsSignIn, $"{provider.Name} needs sign-in.", needsUser: true);
         }
         if (signInProviders.Length > 1)
-            return new SettingsSummary(SettingsSummary.NeedsSignIn, $"{signInProviders.Length} providers need sign-in.", working, NeedsUser: true);
+            return Summary(SettingsSummary.NeedsSignIn, $"{signInProviders.Length} providers need sign-in.", needsUser: true);
 
         // 3. Waiting on running sessions.
         var waitingMachines = machines.Where(m => m.WaitingOnSessions).ToArray();
         if (waitingMachines.Length == 1)
-            return new SettingsSummary(SettingsSummary.WaitingOnSessions, $"{waitingMachines[0].DisplayName} is waiting for running sessions to finish.", working, NeedsUser: true);
+            return Summary(SettingsSummary.WaitingOnSessions, $"{waitingMachines[0].DisplayName} is waiting for running sessions to finish.", needsUser: true);
         if (waitingMachines.Length > 1)
-            return new SettingsSummary(SettingsSummary.WaitingOnSessions, $"{waitingMachines.Length} machines are waiting for running sessions to finish.", working, NeedsUser: true);
+            return Summary(SettingsSummary.WaitingOnSessions, $"{waitingMachines.Length} machines are waiting for running sessions to finish.", needsUser: true);
 
-        // 4. Restart to finish.
-        var local = machines.FirstOrDefault(m => m.Machine.Name is null);
-        if (local?.Machine.RestartReady is { } readyVersion)
-            return new SettingsSummary(SettingsSummary.RestartToFinish, $"Restart Assembly to finish updating to {readyVersion}.", working, NeedsUser: true);
+        // 4. Restart to finish (restartVersion already rides along above when something else leads).
+        if (restartVersion is not null)
+            return Summary(SettingsSummary.RestartToFinish, $"Restart Assembly to finish updating to {restartVersion}.", needsUser: true);
 
         // 5. Nothing needs the user.
-        return new SettingsSummary(SettingsSummary.Nothing, "Everything is ready.", working, NeedsUser: false);
+        return Summary(SettingsSummary.Nothing, "Everything is ready.", needsUser: false);
     }
 
     private static SettingsFailure FailureOf(string rawCode, string? prefix, string? problemDetail = null)
