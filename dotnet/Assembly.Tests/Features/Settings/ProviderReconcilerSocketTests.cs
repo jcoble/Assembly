@@ -158,6 +158,63 @@ public sealed class ProviderReconcilerSocketTests
         }
     }
 
+    // With no check done in this run, a provider is still setting up; only a fresh signed-in check says ready.
+    [Fact]
+    public async Task A_provider_with_no_check_this_run_is_setting_up_not_ready()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("assembly-reconcile-unchecked-").FullName;
+        var home = Directory.CreateDirectory(Path.Combine(tempRoot, "desktop")).FullName;
+        var launcher = new FakeLauncher
+        {
+            Agents =
+            [
+                new("claude", "Claude Code", "claude-agent-acp", [], null, VendorFamily: "claude"),
+                new("codex", "Codex", "codex-acp", [], null, VendorFamily: "codex"),
+            ]
+        };
+
+        try
+        {
+            var homeLock = HomeLock.Take(home);
+            await using var backend = await DesktopBackend.StartAsync(
+                homeLock,
+                home,
+                Token,
+                port: 0,
+                launcher,
+                TextWriter.Null,
+                remote: null,
+                tunnel: null,
+                utilityClis: null,
+                savedRemote: null,
+                engineEffects: null,
+                engineStarted: null,
+                agentsFile: null,
+                loginShell: _ => Task.FromResult<(string?, string?)>((null, null)),
+                programTerminals: null,
+                givenInstall: null,
+                givenUpdateSource: new GatedUpdateSource());
+
+            using var stateSocket = await OpenSocketAsync(backend.Address);
+            await SendAsync(stateSocket, new { t = "sub", id = 1, topic = SettingsStateFeature.Topic });
+            var initial = await WaitForStateAsync(stateSocket, state =>
+                state.GetProperty("providers").EnumerateArray().Any(p => p.GetProperty("id").GetString() == "claude"));
+
+            var claude = initial.GetProperty("providers").EnumerateArray()
+                .Single(p => p.GetProperty("id").GetString() == "claude");
+            Assert.Equal(ProviderRowState.SettingUp, claude.GetProperty("state").GetString());
+            var local = claude.GetProperty("machines").EnumerateArray()
+                .Single(m => m.GetProperty("machineKey").GetString() == "local");
+            Assert.Equal(ProviderRowState.SettingUp, local.GetProperty("state").GetString());
+
+            stateSocket.Abort();
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
     private sealed class FailingUpdateSource : IUpdateSource
     {
         internal const string Secret = "SECRET_INSTALLER_OUTPUT_CANARY";

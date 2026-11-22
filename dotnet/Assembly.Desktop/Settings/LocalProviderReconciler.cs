@@ -165,10 +165,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
             if (toolsBehind.Count == 0)
             {
                 if (fresh)
-                {
                     _updates.ClearLocalFailureIfIdle();
-                    TriggerLocalProbes(enabledSpecs, ct);
-                }
+                // Even with nothing to update, sign-in is checked in this run (also at startup).
+                TriggerLocalProbes(enabledSpecs, ct);
                 return;
             }
 
@@ -260,8 +259,9 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
         if (detected.Count > 0 && _enablement.EnsureEnabled(detected))
             saved = new Dictionary<string, bool>(_enablement.ReadAll(ct), StringComparer.Ordinal);
 
+        // The same one on/off decision the settings view uses.
         return ProviderCatalog.Known
-            .Where(spec => saved.TryGetValue(spec.Id, out var enabled) && enabled)
+            .Where(spec => ProviderEnablementStore.IsEnabled(saved, spec.Id, detected.Contains(spec.Id)))
             .ToArray();
     }
 

@@ -86,7 +86,8 @@ internal static class SettingsStateRules
         SettingsStateComposer.SignInRow? activeSignIn,
         bool explicitlyNotInstalled,
         bool localDescriptorInvalid,
-        SettingsFailure? lastFailure)
+        SettingsFailure? lastFailure,
+        bool checkedThisRun)
     {
         if (machine.ConnectionState is MachineConnectionState.Offline or MachineConnectionState.Disconnected)
             return null;
@@ -98,6 +99,9 @@ internal static class SettingsStateRules
             && lastFailure is null;
         if (machine.ConnectionState == MachineConnectionState.Checking && nothingKnown && !machine.Machine.Updating)
             return null;
+        // A machine still being checked has no fresh provider facts yet, whatever an old row says.
+        if (machine.ConnectionState == MachineConnectionState.Checking)
+            return ProviderRowState.SettingUp;
 
         if (machine.Machine.Updating
             || mirrorState == "snapshotting"
@@ -116,7 +120,15 @@ internal static class SettingsStateRules
         if (lastFailure is not null || providerRow?.AuthState is "could_not_check" or "unsupported")
             return ProviderRowState.Problem;
 
-        return ProviderRowState.Ready;
+        // Ready only on evidence: a check done in this run that found the provider installed and
+        // usable (a completed check records sign-in as signed in or unverified; both are post-check
+        // states). No row, a stale row, or sign-in not yet checked in this run is still setting up.
+        return providerRow is not null
+            && providerRow.Installation == "installed"
+            && providerRow.AuthState is "signed_in" or "unverified"
+            && checkedThisRun
+            ? ProviderRowState.Ready
+            : ProviderRowState.SettingUp;
     }
 
     internal static IReadOnlyList<ModelChoice>? DeriveSharedModels(IReadOnlyList<SettingsProviderMachine> machines)
@@ -145,7 +157,10 @@ internal static class SettingsStateRules
             return ProviderRowState.NeedsSignIn;
         if (machines.Any(m => m.State == ProviderRowState.SettingUp))
             return ProviderRowState.SettingUp;
-        return ProviderRowState.Ready;
+        // With no machine known ready there is nothing to call ready.
+        return machines.Any(m => m.State == ProviderRowState.Ready)
+            ? ProviderRowState.Ready
+            : ProviderRowState.SettingUp;
     }
 
     internal static string DeriveConnectionState(MachineItem item)
@@ -202,9 +217,12 @@ internal static class SettingsStateRules
         bool reconciling = false)
     {
         var machineLabels = machines.ToDictionary(m => m.Key, m => m.DisplayName, StringComparer.Ordinal);
+        // Working means a check, sign-in or update is actually in flight; "not checked yet in
+        // this run" alone (setting up with nothing running) does not spin the ring.
         var working = reconciling
             || machines.Any(m => m.UpdateState is MachineUpdateState.Updating or MachineUpdateState.Restarting)
-            || providers.Any(p => p.Enabled && p.State == ProviderRowState.SettingUp);
+            || providers.Any(p => p.Enabled && p.Machines.Any(m =>
+                m.SignInState is ProviderSignInState.Checking or ProviderSignInState.SigningIn));
 
         // 1. Problem: provider problem or update/restart failure; offline/disconnected machines are skipped.
         var problemProviders = providers.Where(p => p.Enabled && p.State == ProviderRowState.Problem).ToArray();

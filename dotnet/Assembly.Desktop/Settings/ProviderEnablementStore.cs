@@ -40,6 +40,13 @@ internal sealed class ProviderEnablementStore
         return ReadAll(snapshot);
     }
 
+    /// <summary>
+    /// The one on/off decision, shared by the settings view and the reconciler: a saved setting wins;
+    /// with none, a provider installed on this machine counts as on.
+    /// </summary>
+    internal static bool IsEnabled(IReadOnlyDictionary<string, bool> saved, string provider, bool installedHere) =>
+        saved.TryGetValue(provider, out var enabled) ? enabled : installedHere;
+
     internal static IReadOnlyDictionary<string, bool> ReadAll(IReadSnapshot snapshot)
     {
         var rows = snapshot.Query(

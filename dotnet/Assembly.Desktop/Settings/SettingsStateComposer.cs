@@ -24,6 +24,9 @@ internal sealed class SettingsStateComposer(
 {
     private const string LocalKey = "local";
 
+    // A local check counts as evidence for Ready only when it was done in this run of the backend.
+    private readonly long _runStartMs = time.GetUtcNow().ToUnixTimeMilliseconds();
+
     internal sealed record ProviderRow(
         string Machine,
         string Provider,
@@ -101,10 +104,10 @@ internal sealed class SettingsStateComposer(
                     nowMs));
             }
 
-            // Saved on/off setting is the authority; any provider already installed without a saved row counts as on.
-            var enabled = engineData.SavedEnabled.TryGetValue(spec.Id, out var savedEnabled)
-                ? savedEnabled
-                : perMachine.Any(entry => entry.Installed);
+            // The one on/off decision (ProviderEnablementStore.IsEnabled): a saved setting wins;
+            // with none, installed on this machine counts as on — the same rule the reconciler seeds by.
+            var localInstalled = perMachine.FirstOrDefault(entry => entry.MachineKey == LocalKey)?.Installed ?? false;
+            var enabled = ProviderEnablementStore.IsEnabled(engineData.SavedEnabled, spec.Id, localInstalled);
             IReadOnlyList<SettingsProviderMachine> finalized = enabled
                 ? perMachine
                 : perMachine.Select(entry => entry with { State = null }).ToArray();
@@ -247,6 +250,10 @@ internal sealed class SettingsStateComposer(
                 ? failureDetails?.Get($"{spec.Id}/{providerRow.AccountContext}")
                 : null);
 
+        // Local evidence must be from a check in this run; a remote's facts count once its mirror is live.
+        var checkedThisRun = isLocal
+            ? providerRow?.CheckedMs is { } checkedMs && checkedMs >= _runStartMs
+            : mirrorState == "live";
         var state = SettingsStateRules.DeriveProviderMachineState(
             machine,
             mirrorState,
@@ -254,7 +261,8 @@ internal sealed class SettingsStateComposer(
             activeSignIn,
             explicitlyNotInstalled,
             localDescriptorInvalid,
-            lastFailure);
+            lastFailure,
+            checkedThisRun);
 
         var providerTargetId = accountContext is null ? null : $"{spec.Id}/{accountContext}";
         return new SettingsProviderMachine(
