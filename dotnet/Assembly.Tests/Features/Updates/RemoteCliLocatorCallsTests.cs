@@ -94,7 +94,7 @@ public sealed class RemoteCliLocatorCallsTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await Send(socket, """{"t":"hello","protocol":1,"token":"wrong"}""");
+        await Send(socket, """{"t":"hello","protocol":2,"token":"wrong"}""");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         var received = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), timeout.Token);
         Assert.Equal(WebSocketMessageType.Close, received.MessageType);
@@ -154,7 +154,7 @@ public sealed class RemoteCliLocatorCallsTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await socket.ConnectAsync(_address, timeout.Token);
-        await Send(socket, """{"t":"hello","protocol":1,"token":"locator-token"}""");
+        await Send(socket, """{"t":"hello","protocol":2,"token":"locator-token"}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static Task Send(ClientWebSocket socket, string text) => socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, CancellationToken.None);

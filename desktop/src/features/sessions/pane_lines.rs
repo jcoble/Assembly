@@ -10,7 +10,7 @@ use gpui_kit::*;
 use super::list_entries::{changed_lines, list_entries, same_line};
 use super::list_entry::ListEntry;
 use super::project_header::{ProjectHeader, SectionHeader};
-use super::session_row::{OnMark, OnSession, RowContext, SessionRow};
+use super::session_row::{Connect, OnConnect, OnMark, OnSession, RowContext, SessionRow};
 use super::sessions_pane::SessionsPane;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
@@ -109,25 +109,46 @@ impl SessionsPane {
                     .ok();
             })
         };
+        let on_connect: OnConnect = {
+            let pane = pane.clone();
+            Rc::new(move |machine, cx| {
+                pane.update(cx, |pane, cx| pane.connect(machine, cx)).ok();
+            })
+        };
+        let connecting = self.connecting.as_ref().map(|(machine, _)| machine.clone());
+        let connect_error = self.connect_error.clone();
         move |at, _, cx| {
             let Some(entry) = entries.get(at).cloned() else {
                 return Empty.into_any_element();
             };
-            let row = |entry: &super::rail_page::RailEntry, cx: &mut App| RowContext {
-                selected: entry.source.as_ref().is_some_and(|source| {
-                    SelectedSession::global(cx)
-                        .read(cx)
-                        .key()
-                        .is_some_and(|key| {
-                            key.machine == source.machine && key.id == entry.session_id
-                        })
-                }),
-                needs_you: super::sessions_pane::engine_rows::needs_you(entry, cx),
-                offline: Machines::offline(entry.machine.as_deref(), cx),
-                now,
-                arrow: None,
-                on_open: on_open.clone(),
-                on_mark: on_mark.clone(),
+            let row = |entry: &super::rail_page::RailEntry, cx: &mut App| {
+                let offline = Machines::offline(entry.machine.as_deref(), cx);
+                RowContext {
+                    selected: entry.source.as_ref().is_some_and(|source| {
+                        SelectedSession::global(cx)
+                            .read(cx)
+                            .key()
+                            .is_some_and(|key| {
+                                key.machine == source.machine && key.id == entry.session_id
+                            })
+                    }),
+                    needs_you: super::sessions_pane::engine_rows::needs_you(entry, cx),
+                    offline,
+                    now,
+                    arrow: None,
+                    connect: offline.then(|| Connect {
+                        connecting: connecting.as_deref() == entry.machine.as_deref(),
+                        error: connect_error
+                            .as_ref()
+                            .filter(|(machine, _)| {
+                                Some(machine.as_str()) == entry.machine.as_deref()
+                            })
+                            .map(|(_, reason)| reason.clone()),
+                        on_connect: on_connect.clone(),
+                    }),
+                    on_open: on_open.clone(),
+                    on_mark: on_mark.clone(),
+                }
             };
             match entry {
                 ListEntry::Section {

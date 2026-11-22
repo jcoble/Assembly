@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows.Context;
+using Assembly.Application.Features.Chat.Rows.Copies;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -13,7 +15,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// resume, and <c>rows/page</c> for the history above it. A resume catches up at most a page; one further behind, or a
 /// first open, starts from the session's last seq, and the page call loads the history before it.
 /// </summary>
-internal sealed class RowsFeature : IFeature
+internal sealed partial class RowsFeature : IFeature
 {
     public const string Topic = "rows";
 
@@ -60,6 +62,7 @@ internal sealed class RowsFeature : IFeature
 
     public void Register(ICallRegistry calls)
     {
+        RegisterCopyReads(calls);
         // Under the Topics lock, so a row saved meanwhile is in the catch-up or published after it (5.7). It reads the
         // store, never the hub, whose lock is taken before the Topics one when it publishes.
         Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state = (session, after, call) =>
@@ -85,13 +88,8 @@ internal sealed class RowsFeature : IFeature
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, async (args, call) =>
         {
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var remote = await bound.PageAsync(args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
-                bound.EnsureCurrent(); return remote;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
-            var page = _hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
+            var page = await _hub.PageAsync(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
             if (bound is not null)
             {
                 bound.Watch(); bound.EnsureCurrent(); return PageJson(page, bound.ActiveRun);
@@ -104,11 +102,6 @@ internal sealed class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var remote = await bound.SubagentsAsync(args.After, args.Limit, call.Cancellation);
-                bound.EnsureCurrent(); return remote;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation, args.ExpectedSource ?? call.ExpectedSource);
             if (bound is not null) { bound.Watch(); bound.EnsureCurrent(); }
@@ -122,18 +115,14 @@ internal sealed class RowsFeature : IFeature
             var after = args.GetProperty("after").GetInt64();
             var limit = args.TryGetProperty("limit", out var requested) ? requested.GetInt32() : PageLimit;
             var rows = _store.RowsAfter(session, after, Math.Clamp(limit, 1, PageLimit));
-            // A read is one frame, capped at 4 MB even on bulk. Leave space for its result envelope.
-            var json = new List<string>();
-            var bytes = 0;
-            foreach (var row in rows)
-            {
-                var wire = RowWire.ToJson(row);
-                var size = Encoding.UTF8.GetByteCount(wire) + 1;
-                if (bytes + size > 4 * 1024 * 1024 - 1024) break;
-                json.Add(wire);
-                bytes += size;
-            }
-            using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json) + "]}");
+            // A read is one frame, capped at 4 MB even on bulk. A saved copy's hole check asks for its tools' details too.
+            var json = rows.Select(RowWire.ToJson).ToList();
+            var details = args.TryGetProperty("details", out var asked) && asked.ValueKind == JsonValueKind.True
+                ? Detail(session, call.Cancellation) : null;
+            var (kept, saved) = DetailFrames.Fit([.. rows.Select((row, at) => new FrameRow(row.ItemId, row.Kind, Encoding.UTF8.GetByteCount(json[at])))],
+                details, wholeItems: false);
+            var detailJson = details is null ? "" : ",\"details\":" + JsonSerializer.Serialize(saved, RowJsonContext.Rows.IReadOnlyListSavedToolDetail);
+            using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json.Take(kept)) + "]" + detailJson + "}");
             return Task.FromResult(result.RootElement.Clone());
         }, bulk: true);
         calls.Read(Topic, "toolRaw", RowJsonContext.Rows.RawToolArgs, RowJsonContext.Rows.StoredToolCall, (args, call) =>
@@ -144,9 +133,7 @@ internal sealed class RowsFeature : IFeature
         }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
-            var tool = _sessions.Get(args.Session) is { } session
-                ? await _machines.For(session).ToolCallAsync(session, args.Item, call.Cancellation)
-                : null;
+            var tool = _sessions.Get(args.Session) is { } session ? await ToolCallAsync(session, args.Item, call.Cancellation) : null;
             if (tool is null)
                 throw new CallFailed("unknown tool call");
             var (output, outputBytes) = Cut(tool.Output, tool.OutputBytes);
@@ -154,16 +141,11 @@ internal sealed class RowsFeature : IFeature
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || outputBytes != Encoding.UTF8.GetByteCount(output ?? "") || diffBytes != Encoding.UTF8.GetByteCount(diff ?? ""),
                 outputBytes, diffBytes, tool.Terminals);
         }, bulk: true);
-        // Explicit remote context comes from the captured owner, never an unqualified copied-row cache.
+        // A remote session's context is read from its saved copy here, under the captured copy guard (TSK-1692).
         calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, async (args, call) =>
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var files = await bound.FilesAsync(call.Cancellation);
-                bound.EnsureCurrent(); return files;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             // A remote session's copied rows are read here with no disk check, since this disk isn't the one they name.
             var local = string.IsNullOrEmpty(session.Machine);
@@ -175,11 +157,6 @@ internal sealed class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var tokens = await bound.TokensAsync(call.Cancellation);
-                bound.EnsureCurrent(); return tokens;
-            }
             if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
             var result = new SessionTokens(_store.SessionTokens(args.Session, call.Cancellation));
             bound?.EnsureCurrent(); return result;
@@ -188,16 +165,21 @@ internal sealed class RowsFeature : IFeature
         {
             call.Cancellation.ThrowIfCancellationRequested();
             var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
-            if (bound?.Remote == true)
-            {
-                var attachments = await bound.AttachmentsAsync(call.Cancellation);
-                bound.EnsureCurrent(); return attachments;
-            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var prompts = _store.Attachments(args.Session, AttachmentPrompts + 1, AttachmentTail, call.Cancellation);
             bound?.EnsureCurrent();
             return new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)], prompts.Count > AttachmentPrompts);
         });
+    }
+
+    // A saved remote session's tool opens from its copy (TSK-1692). One with no saved detail, a tool of a turn still
+    // running, is read from its machine and shown, not saved: the turn-end read saves it. Offline it is unknown.
+    private async Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string item, CancellationToken ct)
+    {
+        var copied = !string.IsNullOrEmpty(session.Machine) && _hub.Copies.RemoteCopyOf(session.SessionId) is not null;
+        if (copied && _hub.ToolCall(session.SessionId, item) is { } saved) return saved;
+        try { return await _machines.For(session).ToolCallAsync(session, item, ct); }
+        catch (MachineUnreachable) when (copied) { return null; }
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.

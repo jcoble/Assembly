@@ -279,7 +279,7 @@ public sealed class RemoteBulkSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}{path}"), CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","protocol":1,"token":"token"}""");
+        await SendAsync(socket, """{"t":"hello","protocol":2,"token":"token"}""");
         Assert.Equal("welcome", (await ReadAsync(socket)).GetProperty("t").GetString());
         return socket;
     }

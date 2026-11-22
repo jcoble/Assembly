@@ -2,14 +2,17 @@
 //! glyph (a shape as well as a colour), then its title with how long it has run or its age, and an arrow when the row
 //! has something to open; its provider's glyph, then its machine's icon and name ("This Mac", or "This computer" off a Mac, for a local one), all
 //! spelled out with the branch in a tooltip; and its newest text, one line, or its project before it has any. A row that needs you
-//! is outlined in amber; the selected row gets the selected fill and line. The right-click menu moves it between Working and Done or
+//! is outlined in amber; the selected row gets the selected fill and line. An offline remote row offers Connect beside
+//! its preview and shows why the last attempt failed. The right-click menu moves it between Working and Done or
 //! settles it (`sessions/mark`), and copies its link, saying what that link does while the pointer rests on it.
 
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Icon;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, v_flex};
 use gpui_kit::*;
 
 use super::history::age::{age, elapsed_text};
@@ -19,6 +22,9 @@ use super::status::Status;
 use crate::core::navigation::external_urls::session_link;
 use crate::core::state::machines::THIS_MACHINE;
 use crate::core::theme::look::Look;
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::row as row_id;
 use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
 use crate::hinted_item::HintedItem;
 
@@ -31,6 +37,18 @@ const MACHINE_GLYPH: Pixels = px(13.);
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
 /// Opens the row's session.
 pub type OnSession = Rc<dyn Fn(String, Option<String>, &mut Window, &mut App)>;
+/// Asks the backend to connect the named machine: the pane's `connect`.
+pub type OnConnect = Rc<dyn Fn(String, &mut App)>;
+
+/// The Connect a row on a machine that isn't answering carries, as the old rail's rows did.
+#[derive(Clone)]
+pub struct Connect {
+    /// A press is already reaching the machine: the button says so and won't press again.
+    pub connecting: bool,
+    /// Why the last press didn't reach it, shown on this row where it was pressed.
+    pub error: Option<SharedString>,
+    pub on_connect: OnConnect,
+}
 
 /// What a row needs from the pane besides its entry: its place, and what its clicks do.
 #[derive(Clone)]
@@ -43,6 +61,8 @@ pub struct RowContext {
     pub now: Option<i64>,
     /// Present when the row has something to open: a question, a workflow or sessions it started.
     pub arrow: Option<RowArrow>,
+    /// Present while the row's machine isn't answering: its Connect button.
+    pub connect: Option<Connect>,
     pub on_open: OnSession,
     pub on_mark: OnMark,
 }
@@ -123,6 +143,7 @@ impl RenderOnce for SessionRow {
             offline,
             now,
             arrow,
+            connect,
             on_open,
             on_mark,
         } = self.context;
@@ -175,6 +196,47 @@ impl RenderOnce for SessionRow {
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
         let link_machine = route.clone();
+        // The offline machine's controls sit at the bottom right, alongside the details and preview.
+        let connect = connect.zip(route.clone()).map(|(connect, machine)| {
+            let on_connect = connect.on_connect;
+            // Why the last press didn't reach, over the button: short on the row, whole in its tooltip.
+            let reason = connect.error.map(|reason| {
+                let whole = reason.clone();
+                div()
+                    .id(SharedString::from(format!("connect-error:{id}")))
+                    .max_w(px(170.))
+                    .truncate()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(look.problem)
+                    .tooltip(move |window, cx| Tooltip::new(whole.clone()).build(window, cx))
+                    .child(reason)
+            });
+            v_flex()
+                .flex_none()
+                .items_end()
+                .gap_1()
+                .children(reason)
+                .child(
+                    Button::new(SharedString::from(format!("connect:{id}")))
+                        .control(
+                            format!("{}.connect", row_id(&format!("session:{id}"))),
+                            format!("Connect to {machine}"),
+                        )
+                        .outline()
+                        .xsmall()
+                        .label(if connect.connecting {
+                            "Connecting…"
+                        } else {
+                            "Connect"
+                        })
+                        .disabled(connect.connecting)
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            on_connect(machine.clone(), cx);
+                        }),
+                )
+                .into_any_element()
+        });
         ThreeLineRow {
             key: format!("session:{id}").into(),
             lead,
@@ -194,7 +256,7 @@ impl RenderOnce for SessionRow {
                 .into(),
             dot: presence == Presence::Unread,
         }
-        .item(cx)
+        .item_with_action(connect, cx)
         .debug_selector(move || selector.clone())
         .border_1()
         .border_color(outline)

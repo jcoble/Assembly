@@ -81,6 +81,11 @@ pub fn tabular() -> FontFeatures {
 
 impl ThreeLineRow {
     pub fn item(self, cx: &App) -> ListItem {
+        self.item_with_action(None, cx)
+    }
+
+    /// Gives an optional action its own space beside the details and preview, within the row's surface.
+    pub fn item_with_action(self, action: Option<AnyElement>, cx: &App) -> ListItem {
         let (_, title_height) =
             Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
         let look = Look::of(cx);
@@ -155,6 +160,11 @@ impl ThreeLineRow {
             .truncate()
             .text_role(TextRole::Meta, cx)
             .text_color(look.text_2);
+        let details = h_flex()
+            .items_end()
+            .gap(SPACE[4])
+            .child(v_flex().flex_1().min_w_0().child(second).child(third))
+            .children(action);
         // The unread dot sits in the left padding, level with the title, so it doesn't move anything.
         let dot = self.dot.then(|| {
             div()
@@ -182,14 +192,7 @@ impl ThreeLineRow {
                     .items_start()
                     .gap(SPACE[4])
                     .child(div().flex_none().mt(SPACE[0]).child(self.lead))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(first)
-                            .child(second)
-                            .child(third),
-                    ),
+                    .child(v_flex().flex_1().min_w_0().child(first).child(details)),
             )
     }
 }

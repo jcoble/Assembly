@@ -21,6 +21,12 @@ public static class RowWire
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
 
+    public static JsonElement ToElement(StoredRow row)
+    {
+        using var json = JsonDocument.Parse(ToJson(row));
+        return json.RootElement.Clone();
+    }
+
     /// <summary>A row as another machine sent it.</summary>
     public static StoredRow Read(JsonElement json) =>
         new(json.GetProperty("sessionId").GetString()!, json.GetProperty("seq").GetInt64(), json.GetProperty("runId").GetString(),

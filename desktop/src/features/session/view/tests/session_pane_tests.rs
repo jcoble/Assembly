@@ -266,6 +266,39 @@ fn an_older_page_loads_above_once_at_a_time_and_not_past_the_first(cx: &mut Test
     assert_eq!(client.calls().len(), 2, "nothing older to load");
 }
 
+// A live call hearing its machine go (the composer's config read, through SourceLost) is not the saved copy's
+// rows refusing: paging the copy goes on while the machine is away, and the pane still reopens when ready.
+#[gpui::test]
+fn paging_the_saved_copy_goes_on_while_its_machine_is_away(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(10, "ten")], true, None)));
+    jump(&client, 10, cx);
+    pane.update(cx, |pane, _| {
+        pane.row_source = Some(crate::core::socket::row_source::ExpectedRowSource {
+            machine: "owner".into(),
+            generation: 3,
+            route_machine: Some("lane".into()),
+        });
+    });
+    let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
+    composer.update(cx, |_, cx| {
+        cx.emit(ComposerEvent::SourceLost(crate::core::engine::SessionKey {
+            machine: "owner".into(),
+            id: "s1".into(),
+        }))
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.update(|_, cx| pane.read(cx).source_lost),
+        "the pane still reopens the session when its source is ready"
+    );
+    client.queue_answer(Ok(page(vec![user(4, "four")], false, None)));
+    pane.update(cx, |pane, cx| pane.load_older(cx));
+    cx.run_until_parked();
+    assert_eq!(keys(&pane, cx), ["seq:4", "seq:10"]);
+}
+
 // Pins: g0-session#29
 #[gpui::test]
 fn a_page_that_fails_says_why_and_an_aborted_one_says_nothing(cx: &mut TestAppContext) {

@@ -60,6 +60,10 @@ pub struct SessionsPane {
     /// The marks on their way, each until its answer, by `next_mark`.
     pub(super) marking: HashMap<u64, Task<()>>,
     pub(super) next_mark: u64,
+    /// A row's Connect while it reaches its machine, and which machine it is for.
+    pub(super) connecting: Option<(String, Task<()>)>,
+    /// Why the last Connect didn't reach its machine, shown on that machine's rows until it answers or is pressed again.
+    pub(super) connect_error: Option<(String, SharedString)>,
     /// Why the last mark or open failed, until the next one starts.
     pub(super) row_error: Option<SharedString>,
     /// Waits for the answer to the last row opened, so a refusal says why instead of looking like a dead click.
@@ -206,6 +210,8 @@ impl SessionsPane {
             creating: None,
             marking: HashMap::new(),
             next_mark: 0,
+            connecting: None,
+            connect_error: None,
             row_error: None,
             opening: None,
             rail: Rail::default(),
@@ -486,13 +492,15 @@ fn needs_words(needs: usize) -> Option<String> {
 }
 
 /// Says why a row didn't open. A row on another machine is refused as `source_changed` when that machine can't be
-/// reached, which reads as nonsense to someone who only clicked a row, so it names the machine instead.
+/// reached, which reads as nonsense to someone who only clicked a row, so it names the machine instead. A remote
+/// session never saved here is refused as `not_saved`, whose message already says which machine to connect.
 pub(crate) fn refusal_words(
     route: Option<&str>,
     error: &crate::core::engine::EngineRefusal,
 ) -> String {
     match route {
         _ if error.code == "unknown_engine_session" => NOT_FOUND.into(),
+        _ if error.code == "not_saved" => error.message.clone(),
         Some(machine) if error.code == "source_changed" => not_connected(machine),
         _ => format!("That session didn't open: {}", error.message),
     }

@@ -58,6 +58,10 @@ pub struct Machine {
     /// When a remote stopped answering; cleared when it answers.
     #[serde(default)]
     pub offline_since_ms: Option<i64>,
+    /// Its mirror here is caught up: a remote answers probes before this, and only then can its sessions' live
+    /// calls be captured.
+    #[serde(default)]
+    pub live: bool,
 }
 
 /// Information only: nothing is refused on it.

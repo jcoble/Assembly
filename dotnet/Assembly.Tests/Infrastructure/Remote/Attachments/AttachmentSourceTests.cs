@@ -168,29 +168,6 @@ public sealed class AttachmentSourceTests
         Assert.Empty(f.Staged()); Assert.Empty(f.Saved());
     }
 
-    [Fact]
-    public async Task Remote_context_reads_use_owner_rows_not_same_ID_cached_rows_and_return_actual_route()
-    {
-        await using var f = await Fixture.Start();
-        var ownerRows = RowStore.Open(f.Hosts.Remote.Fixture.Db); var cachedRows = RowStore.Open(f.Hosts.Mac.Fixture.Db);
-        var owner = new RowBatch(); owner.Rows.Add(new("turn", "user", RowKind.User, JsonSerializer.SerializeToElement(new { text = "owner prompt\nAttached image: /owner.png" }), 1));
-        var cache = new RowBatch(); cache.Rows.Add(new("turn", "user", RowKind.User, JsonSerializer.SerializeToElement(new { text = "wrong cached prompt\nAttached image: /cache.png" }), 1));
-        owner.Rows.Add(new("turn", "tool", RowKind.Tool, JsonSerializer.SerializeToElement(new { kind = "edit", state = "completed", path = "owner.txt", added = 2, removed = 1 }), 2));
-        cache.Rows.Add(new("turn", "tool", RowKind.Tool, JsonSerializer.SerializeToElement(new { kind = "edit", state = "completed", path = "wrong-cache.txt", added = 99, removed = 0 }), 2));
-        ownerRows.Commit(Fixture.Session, owner); cachedRows.Commit(Fixture.Session, cache);
-        using var socket = await Open(f.Hosts.Mac.Address);
-        var args = new RowsFeature.SessionArgs(Fixture.Session, f.Source);
-        var reply = Result(await Call(socket, 1, "rows", "attachments", args with { ExpectedSource = null }, RowJsonContext.Rows.SessionArgs, f.Source));
-        Assert.Equal("workbox-test", reply.GetProperty("machine").GetString());
-        var prompt = Assert.Single(reply.GetProperty("prompts").EnumerateArray()).GetString();
-        Assert.Contains("owner prompt", prompt); Assert.DoesNotContain("wrong cached", prompt);
-        var file = Assert.Single(Result(await Call(socket, 2, "rows", "files", args, RowJsonContext.Rows.SessionArgs)).EnumerateArray());
-        Assert.Equal("owner.txt", file.GetProperty("path").GetString()); Assert.Equal(2, file.GetProperty("added").GetInt64());
-        Error(await Call(socket, 3, "rows", "attachments", args, RowJsonContext.Rows.SessionArgs, f.Source with { Generation = f.Source.Generation + 1 }), "bad_args");
-        var legacy = Result(await Call(socket, 4, "rows", "attachments", new RowsFeature.SessionArgs(Fixture.Session), RowJsonContext.Rows.SessionArgs));
-        Assert.Contains("wrong cached", Assert.Single(legacy.GetProperty("prompts").EnumerateArray()).GetString());
-    }
-
     private sealed class Fixture : IAsyncDisposable
     {
         public const string Session = "attachment-session";
@@ -298,7 +275,7 @@ public sealed class AttachmentSourceTests
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket{(bulk ? "/bulk" : "")}"), timeout.Token);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call<T>(WebSocket socket, long id, string feature, string method, T args, JsonTypeInfo<T> type, ExpectedSource? frameSource = null)

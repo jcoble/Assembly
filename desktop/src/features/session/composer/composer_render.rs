@@ -147,11 +147,12 @@ impl Render for Composer {
         let connecting = self.connecting.is_some();
         let theme = cx.theme();
         let look = Look::of(cx);
-        let offline = (self.offline.as_ref()).map(|machine| {
+        let offline = (self.offline.as_ref()).map(|_| {
+            // The old app's quiet line over a saved remote chat (ConversationSurface.svelte): no more than that.
             SharedString::from(if self.still_offline {
-                format!("{machine} still isn't answering. Send and Stop wait until it does.")
+                "Still offline, showing the saved chat"
             } else {
-                format!("{machine} is offline. Send and Stop wait until it answers.")
+                "Offline, showing the saved chat"
             })
         });
         let edge = if self.dragging {

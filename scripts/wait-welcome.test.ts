@@ -85,7 +85,7 @@ async function fixture(reply: (peer: any, hello: any, attempt: number) => void, 
     async close() { for (const peer of peers) peer.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
-const welcome = (commit: string | null = target) => ({ t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, commit, backendIdentity: identities.get(commit ?? '') });
+const welcome = (commit: string | null = target) => ({ t: 'welcome', protocol: 2, machine: 'workbox-test', format: 5, commit, backendIdentity: identities.get(commit ?? '') });
 const token = 'private-owner-token-for-hello';
 const options = (base: string, seconds = 0.6) => ({ name: 'Workbox Test', base, commit: target, seconds });
 
@@ -107,7 +107,7 @@ async function cli(base: string, seconds = '1', sendToken = true) {
 
 for (const actual of [target, equivalent]) test(`accepts authenticated ${actual === target ? 'exact' : 'same retained code'} commit`, async () => {
   const server = await fixture((peer, hello) => {
-    assert.deepEqual(hello, { t: 'hello', token, protocol: 1 });
+    assert.deepEqual(hello, { t: 'hello', token, protocol: 2 });
     const frame = serverFrame(welcome(actual));
     peer.write(frame.subarray(0, 7));
     setImmediate(() => peer.write(frame.subarray(7)));
@@ -159,12 +159,12 @@ test('a mismatched backend fails on the first welcome and names both commits', a
 });
 
 const invalid: [string, unknown, RegExp][] = [
-  ['protocol', { ...welcome(), protocol: 2 }, /incompatible welcome protocol/],
+  ['protocol', { ...welcome(), protocol: 3 }, /incompatible welcome protocol/],
   ['format', { ...welcome(), format: 4 }, /incompatible welcome format/],
   ['machine', { ...welcome(), machine: '' }, /invalid welcome machine/],
   ['frame kind', { ...welcome(), t: 'result' }, /invalid welcome machine or frame/],
   ['null commit', welcome(null), /commit is null \(unknown build\)/],
-  ['missing producer commit', { t: 'welcome', protocol: 1, machine: 'workbox-test', format: 5, engine: 'workbox-test' }, /commit is missing or invalid/],
+  ['missing producer commit', { t: 'welcome', protocol: 2, machine: 'workbox-test', format: 5, engine: 'workbox-test' }, /commit is missing or invalid/],
   ['malformed commit', welcome('not-a-commit'), /commit is missing or invalid/],
   ['unknown identity', welcome('0'.repeat(40)), /backend identity is missing or invalid/],
 ];

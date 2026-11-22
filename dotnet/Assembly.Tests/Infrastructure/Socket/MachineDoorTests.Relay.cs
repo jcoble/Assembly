@@ -18,7 +18,7 @@ public sealed partial class MachineDoorTests
     private async Task<ClientWebSocket> OpenBulk()
     {
         var socket = new ClientWebSocket(); await socket.ConnectAsync(new Uri(_address + "/bulk"), default);
-        await Send(socket, """{"t":"hello","protocol":1,"token":"token"}""");
+        await Send(socket, """{"t":"hello","protocol":2,"token":"token"}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> RelayCall<T>(WebSocket socket, string method, T args, JsonTypeInfo<T> type)

@@ -64,7 +64,7 @@ async fn remote_child_outside_the_sql_rail_page_uses_the_one_discovered_source_s
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly A","engine":"actual-A"}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly A","engine":"actual-A"}),
             )],
             (Some("sub"), Some("machines"), _) => vec![Reply::Frame(
                 json!({"t":"state","sub":id,"items":[{"key":"Saved B","item":{"name":"Saved B","kind":"remote","reachable":true,"checked":true}}]}),
@@ -175,7 +175,7 @@ async fn a_saved_machine_that_stops_answering_keeps_its_rows_until_it_returns_as
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly A","engine":"actual-A"}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly A","engine":"actual-A"}),
             )],
             (Some("sub"), Some("machines"), _) => {
                 machines_sub = id.clone();
@@ -332,7 +332,7 @@ mod session_notices {
                 frame["method"].as_str(),
             ) {
                 (Some("hello"), ..) => vec![Reply::Frame(
-                    json!({"t":"welcome","protocol":1,"machine":"Friendly A","engine":"actual-A"}),
+                    json!({"t":"welcome","protocol":2,"machine":"Friendly A","engine":"actual-A"}),
                 )],
                 (Some("sub"), Some("machines"), _) => vec![Reply::Frame(
                     json!({"t":"state","sub":frame["id"],"items":[{"key":"Saved B","item":{"name":"Saved B","kind":"remote","reachable":true,"checked":true}}]}),

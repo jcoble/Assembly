@@ -77,7 +77,7 @@ export async function waitForWelcome(options: Options, tokenInput: string | type
   function connect() {
     if (finished) return;
     const peer = socket = new WebSocket(url);
-    peer.onopen = () => peer.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+    peer.onopen = () => peer.send(JSON.stringify({ t: 'hello', token, protocol: 2 }));
     peer.onerror = () => { last = 'socket unreachable'; again(peer); };
     peer.onclose = event => { last = `socket closed (${event.code})`; again(peer); };
     peer.onmessage = async event => {
@@ -88,7 +88,7 @@ export async function waitForWelcome(options: Options, tokenInput: string | type
       if (!frame || frame.t !== 'welcome' || typeof frame.machine !== 'string' || !frame.machine.trim()) {
         finish(undefined, 'invalid welcome machine or frame'); return;
       }
-      if (frame.protocol !== 1) { finish(undefined, 'incompatible welcome protocol (expected 1)'); return; }
+      if (frame.protocol !== 2) { finish(undefined, 'incompatible welcome protocol (expected 2)'); return; }
       if (frame.format !== 5) { finish(undefined, 'incompatible welcome format (expected 5)'); return; }
       if (frame.commit === null) { finish(undefined, 'welcome commit is null (unknown build)'); return; }
       if (typeof frame.commit !== 'string' || !/^[a-f0-9]{40}$/i.test(frame.commit)) {

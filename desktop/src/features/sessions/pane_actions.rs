@@ -1,5 +1,5 @@
-//! The sessions pane's actions: opening the new-session form (empty, or filled in for a project) and moving a
-//! session to another group with `sessions/mark`.
+//! The sessions pane's actions: opening the new-session form (empty, or filled in for a project), moving a
+//! session to another group with `sessions/mark`, and a row's Connect (`machines/connect`).
 
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -105,6 +105,67 @@ impl SessionsPane {
             .ok();
         });
         self.marking.insert(id, task);
+        cx.notify();
+    }
+
+    /// A row's Connect: asks the backend to reach the machine now, the same `machines/connect` Settings and the
+    /// composer use. The machines list says when it answers, and the rows follow it; one that doesn't answer
+    /// says why on that machine's rows, where it was pressed. A press for a machine already being reached is
+    /// the same press.
+    pub(super) fn connect(&mut self, machine: String, cx: &mut Context<Self>) {
+        if self
+            .connecting
+            .as_ref()
+            .is_some_and(|(reaching, _)| reaching == &machine)
+        {
+            return;
+        }
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return;
+        };
+        // The answer is the machine as the attempt left it: still unreachable carries the reason, which is the
+        // failure to show even though the call itself answered.
+        let call = socket
+            .read(cx)
+            .call::<crate::core::state::machine::Machine>(
+                "machines",
+                "connect",
+                json!({ "machine": machine }),
+                None,
+            );
+        if self
+            .connect_error
+            .as_ref()
+            .is_some_and(|(failed, _)| failed == &machine)
+        {
+            self.connect_error = None;
+        }
+        let reached = machine.clone();
+        let task = cx.spawn(async move |pane, cx| {
+            let outcome = call.await;
+            pane.update(cx, |pane, cx| {
+                if pane
+                    .connecting
+                    .as_ref()
+                    .is_some_and(|(reaching, _)| reaching == &reached)
+                {
+                    pane.connecting = None;
+                }
+                let failed = match outcome {
+                    Outcome::Ok(machine) if !machine.reachable => Some(match machine.reason {
+                        Some(reason) => reason,
+                        None => "didn't answer".to_string(),
+                    }),
+                    Outcome::Failed(failure) => Some(failure.message),
+                    _ => None,
+                };
+                pane.connect_error =
+                    failed.map(|reason| (reached.clone(), SharedString::from(reason)));
+                cx.notify();
+            })
+            .ok();
+        });
+        self.connecting = Some((machine, task));
         cx.notify();
     }
 }

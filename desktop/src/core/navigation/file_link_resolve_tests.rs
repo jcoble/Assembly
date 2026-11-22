@@ -353,10 +353,7 @@ async fn a_listed_machine_that_is_not_connected_says_so(cx: &mut TestAppContext)
     h.connect();
     h.owner.lock().unwrap().refuse = Some(("unreachable", "Box: machine socket is disconnected"));
     h.link("/srv/y.cs", Some("Box")).await;
-    assert_eq!(
-        h.shown(),
-        ["That file is on Box, which this app isn't connected to."]
-    );
+    assert_eq!(h.shown(), ["On Box, which is offline."]);
     assert!(h.opened().is_empty());
 }
 

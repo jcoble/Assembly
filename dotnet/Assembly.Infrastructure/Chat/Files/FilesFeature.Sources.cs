@@ -21,7 +21,8 @@ internal sealed partial class FilesFeature
         if (FolderView.IsView(session.GetString())) return null;
         var source = expected.Deserialize(FilesJson.Default.ExpectedSource) ?? throw new CallFailed("source_changed");
         if (sourceBindings is null) throw new CallFailed("The file source cannot be verified.", "source_changed");
-        var guard = await sourceBindings.CaptureAsync(source, session.GetString()!, call.Cancellation);
+        // A file call acts on the session's machine, so a remote one needs its live owner, never the saved copy.
+        var guard = await sourceBindings.CaptureLiveAsync(source, session.GetString()!, call.Cancellation);
         try { guard.EnsureDisplayCurrent(); }
         catch { guard.Dispose(); throw; }
         // The existing socket reply owner fences delivery and disposes the same guard after the reply.

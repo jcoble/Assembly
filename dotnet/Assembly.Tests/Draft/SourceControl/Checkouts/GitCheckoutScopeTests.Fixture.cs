@@ -113,7 +113,7 @@ public sealed partial class GitCheckoutScopeTests
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(Hosts.Mac.Address) { Scheme = "ws", Path = "/socket" }.Uri, default);
-            await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}"), WebSocketMessageType.Text, true, default);
+            await socket.SendAsync(Encoding.UTF8.GetBytes("{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}"), WebSocketMessageType.Text, true, default);
             Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
         }
         internal async Task<JsonElement> Call(WebSocket socket, string method, object args)

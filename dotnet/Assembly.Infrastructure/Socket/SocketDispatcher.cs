@@ -128,8 +128,18 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             // A row committed before the snapshot but published after it is already in it (5.7): only rows past the
             // snapshot's highest seq go out.
             var sent = rows.Count > 0 ? Seq(rows[^1]) : seq;
-            return ([RowsStateFrame(sub, seq), .. rows.Select(row => RowsFrame(sub, row))],
-                (_, row) => Seq(row) > sent ? RowsFrame(sub, row) : (ReadOnlyMemory<byte>?)null);
+            ReadOnlyMemory<byte>? Live(string row)
+            {
+                // The session's saved copy was dropped (TSK-1692): the window reloads from seq 0, and its rows
+                // saved again pass from there.
+                if (row == LiveHub.Reset)
+                {
+                    sent = 0;
+                    return RowsStateFrame(sub, 0);
+                }
+                return Seq(row) > sent ? RowsFrame(sub, row) : (ReadOnlyMemory<byte>?)null;
+            }
+            return ([RowsStateFrame(sub, seq), .. rows.Select(row => RowsFrame(sub, row))], (_, row) => Live(row));
         }, opened, Sources: sources));
 
     internal async Task<ISocketSubscription?> SubscribeAsync(InFrame frame, long id, SocketConnection connection)
@@ -152,7 +162,6 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             binding = await topic.Sources.CaptureAsync(frame.ExpectedSource, frame.Key, capture.Token);
             binding.EnsureCurrent();
             subscription = new(binding, connection, id);
-            if (binding.Remote) { subscription.Start(frame.After); return subscription; }
             var opened = Subscribe(frame, id, connection, subscription);
             if (opened is null) subscription.Dispose();
             return opened;

@@ -93,6 +93,11 @@ impl Render for CommitBoxDrag {
 const PR_SCOPE: &str = "Pull requests below are for the session folder, not this project.";
 impl SourceControlPane {
     fn render_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        // An open drawer on a machine that went away says so at once, whatever its last good read held; the
+        // machines list coming back reads it again (source_control_outcomes.rs `machine_changed`).
+        if let Some(machine) = self.away_machine(cx) {
+            return self.offline_body(machine, cx);
+        }
         match self.read.read(cx).shown().clone() {
             Shown::NoSession => empty_state(
                 "No project selected yet",
@@ -187,51 +192,59 @@ impl SourceControlPane {
                 cx,
             );
         }
-        let machine = self.read.read(cx).unreachable_machine().map(String::from);
+        if let Some(machine) = self.read.read(cx).unreachable_machine().map(String::from) {
+            return self.offline_body(machine, cx);
+        }
         let danger = cx.theme().danger;
         v_flex()
             .px_3()
             .gap_2()
             .items_start()
-            .map(|view| match machine {
-                Some(machine) => {
-                    let connecting = self.connecting.is_some();
-                    let chosen = machine.clone();
-                    view.child(
-                        div()
-                            .text_role(TextRole::Body, cx)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(format!("{machine} isn't connected")),
-                    )
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .text_color(danger)
+                    .child(message),
+            )
+            .child(self.try_again(cx))
+            .children(result)
+            .into_any_element()
+    }
+    /// The read's machine isn't answering: its name, Connect and Try again, whether a read failed or the
+    /// machines list simply said so while the drawer sat open on its last good read.
+    fn offline_body(&mut self, machine: String, cx: &mut Context<Self>) -> AnyElement {
+        let result = self.result_element(cx);
+        let connecting = self.connecting.is_some();
+        let chosen = machine.clone();
+        v_flex()
+            .px_3()
+            .gap_2()
+            .items_start()
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(format!("{machine} isn't connected")),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("source-control-connect")
-                                    .primary()
-                                    .compact()
-                                    .label(if connecting {
-                                        "Connecting…"
-                                    } else {
-                                        "Connect"
-                                    })
-                                    .disabled(connecting)
-                                    .on_click(cx.listener(move |pane, _, _, cx| {
-                                        pane.connect(chosen.clone(), cx)
-                                    })),
-                            )
-                            .child(self.try_again(cx)),
-                    )
-                }
-                None => view
-                    .child(
-                        div()
-                            .text_role(TextRole::Body, cx)
-                            .text_color(danger)
-                            .child(message),
+                        Button::new("source-control-connect")
+                            .primary()
+                            .compact()
+                            .label(if connecting {
+                                "Connecting…"
+                            } else {
+                                "Connect"
+                            })
+                            .disabled(connecting)
+                            .on_click(
+                                cx.listener(move |pane, _, _, cx| pane.connect(chosen.clone(), cx)),
+                            ),
                     )
                     .child(self.try_again(cx)),
-            })
+            )
             .children(result)
             .into_any_element()
     }

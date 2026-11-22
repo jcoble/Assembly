@@ -238,6 +238,9 @@ impl SessionPane {
         );
         same_disposition
             && self._rows.is_some()
+            // Rows can outlive a lost live source (a saved copy's keep flowing): ready also needs a composer
+            // that can act, or the shortcut would leave Send off behind a successful open.
+            && (self.read_only || self.composer.read(cx).operational())
             && self.held.is_none()
             && self
                 .active_source_cut

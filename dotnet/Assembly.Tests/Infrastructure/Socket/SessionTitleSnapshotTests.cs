@@ -32,7 +32,7 @@ public sealed class SessionTitleSnapshotTests
         var calls = new SocketDispatcher(f.Db.Writer, topics, f.Time, NullLogger.Instance);
         new SessionsFeature(sessions, new MachineSet(new FakeMachine(null, sessions))).Register(calls);
         using var socket = new PausedSender();
-        socket.Feed("""{"t":"hello","protocol":1,"token":"test"}""");
+        socket.Feed("""{"t":"hello","protocol":2,"token":"test"}""");
         socket.Feed("""{"t":"sub","id":9223372036854775807,"topic":"sessions","sessionTitleParts":1}""");
         var connection = new SocketConnection(socket, calls, f.Time);
         var running = connection.RunAsync(Encoding.UTF8.GetBytes("test"), f.Machine, default, f.Machine);
@@ -78,7 +78,7 @@ public sealed class SessionTitleSnapshotTests
         var calls = new SocketDispatcher(f.Db.Writer, topics, f.Time, NullLogger.Instance);
         new SessionsFeature(sessions, new MachineSet(new FakeMachine(null, sessions))).Register(calls);
         using var socket = new PausedSender();
-        socket.Feed("""{"t":"hello","protocol":1,"token":"test"}""");
+        socket.Feed("""{"t":"hello","protocol":2,"token":"test"}""");
         socket.Feed("""{"t":"sub","id":1,"topic":"sessions","sessionTitleParts":1}""");
         var running = new SocketConnection(socket, calls, f.Time).RunAsync(Encoding.UTF8.GetBytes("test"), f.Machine, default, f.Machine);
         try
@@ -100,7 +100,7 @@ public sealed class SessionTitleSnapshotTests
         var topics = new TopicSet(); using var f = new EngineFixture(topics: topics);
         var calls = new SocketDispatcher(f.Db.Writer, topics, f.Time, NullLogger.Instance);
         using var socket = new PausedSender();
-        socket.Feed("""{"t":"hello","protocol":1,"token":"test"}"""); socket.Feed(subscription);
+        socket.Feed("""{"t":"hello","protocol":2,"token":"test"}"""); socket.Feed(subscription);
         var running = new SocketConnection(socket, calls, f.Time).RunAsync(Encoding.UTF8.GetBytes("test"), f.Machine, default, f.Machine);
         try
         {

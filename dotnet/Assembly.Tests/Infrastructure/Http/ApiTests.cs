@@ -281,7 +281,7 @@ public sealed partial class ApiTests : IAsyncLifetime
     {
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(SocketUri("/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":2}""");
         var welcome = await ReadFrameAsync(socket);
         Assert.Equal(RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
         Assert.Equal(Environment.MachineName, welcome.GetProperty("machine").GetString());
@@ -415,7 +415,7 @@ public sealed partial class ApiTests : IAsyncLifetime
         try
         {
             await socket.ConnectAsync(new Uri($"ws://{address.Authority}{path}"), CancellationToken.None).WaitAsync(Wait);
-            await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token, protocol = 1 }));
+            await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token, protocol = 2 }));
             Assert.Equal("welcome", (await ReadFrameAsync(socket)).GetProperty("t").GetString());
             return socket;
         }

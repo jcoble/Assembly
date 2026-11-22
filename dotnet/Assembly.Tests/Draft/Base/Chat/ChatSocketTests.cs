@@ -197,7 +197,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"chat-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"chat-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

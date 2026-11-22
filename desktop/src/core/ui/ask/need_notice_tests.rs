@@ -50,7 +50,7 @@ async fn row_for(need: Value, cx: &mut TestAppContext) -> (Fixture, &mut VisualT
         let result = |value| Reply::Frame(json!({"t":"result","id":id,"result":value}));
         match (frame["t"].as_str(), frame["method"].as_str()) {
             (Some("hello"), _) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly","engine":"owner"}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly","engine":"owner"}),
             )],
             (Some("sub"), _) if frame["stream"] == "engine" => {
                 let items = if frame["topic"] == "needs_me" {

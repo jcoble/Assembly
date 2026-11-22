@@ -47,6 +47,7 @@ fn open_menu(entry: RailEntry, cx: &mut TestAppContext) -> (Rc<Cell<u32>>, &mut 
             offline: false,
             now: None,
             arrow: None,
+            connect: None,
             on_open: Rc::new(|_, _, _, _| {}),
             on_mark: Rc::new(move |_, _, _| marked.set(marked.get() + 1)),
         },

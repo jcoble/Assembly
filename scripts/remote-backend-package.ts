@@ -13,7 +13,7 @@ export type PackageInput = { publishDir: string; commit: string; outputFile: str
 export type PackageFile = { path: string; bytes: number; sha256: string; mode: '0644' | '0755' };
 export type RemoteBackendManifest = {
   schemaVersion: 1; packageType: 'assembly-dotnet-remote-backend-dev'; buildKind: 'development';
-  target: 'linux-x64'; commit: string; protocol: 1; format: 5;
+  target: 'linux-x64'; commit: string; protocol: 2; format: 5;
   frameworks: { name: string; version: string }[]; files: PackageFile[];
 };
 export function sameBackendFiles(before: PackageFile[], after: PackageFile[]) {
@@ -50,7 +50,7 @@ async function sourceVersions(source: string) {
     ['dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs', /\bconst int FormatVersion = (\d+);/g]
   ] as const) {
     const matches = [...(await fs.readFile(path.join(source, relative), 'utf8')).matchAll(expression)];
-    const expected = relative.endsWith('SocketConnection.cs') ? '1' : '5';
+    const expected = relative.endsWith('SocketConnection.cs') ? '2' : '5';
     if (matches.length !== 1 || matches[0][1] !== expected) throw new Error('Unsupported or ambiguous source protocol/format');
   }
 }
@@ -120,7 +120,7 @@ async function prepareBackendDirectory(input: Pick<PackageInput, 'publishDir' | 
     || typeof item.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(item.version)))
     throw new Error('Missing or invalid framework requirements');
   const manifest: RemoteBackendManifest = { schemaVersion: 1, packageType: 'assembly-dotnet-remote-backend-dev',
-    buildKind: 'development', target: 'linux-x64', commit: input.commit, protocol: 1, format: 5,
+    buildKind: 'development', target: 'linux-x64', commit: input.commit, protocol: 2, format: 5,
     frameworks: frameworks.map(({ name, version }) => ({ name, version })), files };
   const encoded = Buffer.from(JSON.stringify(manifest, null, 2) + '\n');
   if (files.reduce((sum, file) => sum + file.bytes, encoded.length) > MAX_UNPACKED) throw new Error('Unpacked package exceeds limit');

@@ -166,7 +166,7 @@ public sealed class SessionTokensTests
         var http = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{http.Authority}/socket"), CancellationToken.None);
-        await Send(socket, new { t = "hello", token = "tokens-token", protocol = 1 });
+        await Send(socket, new { t = "hello", token = "tokens-token", protocol = 2 });
         Assert.StartsWith("""{"t":"welcome""", await Read(socket));
         return socket;
     }

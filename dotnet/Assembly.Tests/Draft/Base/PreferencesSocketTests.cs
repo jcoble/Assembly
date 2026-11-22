@@ -99,7 +99,7 @@ public sealed class PreferencesSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"prefs-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"prefs-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

@@ -327,7 +327,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"machines-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"machines-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

@@ -73,7 +73,7 @@ public sealed class TerminalSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri(_address, path), CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"terminal-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"terminal-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

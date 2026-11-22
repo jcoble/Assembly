@@ -91,13 +91,22 @@ impl SessionPane {
                         && (pane.row_source.as_ref())
                             .is_some_and(|source| source.machine == key.machine) =>
                 {
-                    pane.on_rows(
-                        crate::features::session::client::session_client::RowUpdate::Refused {
-                            code: "source_changed".into(),
-                            message: "The selected row source changed.".into(),
-                        },
-                        cx,
-                    )
+                    if pane.is_remote() {
+                        // A live call heard the machine go; the saved copy's rows didn't refuse. Keep the
+                        // subscription and its paging, and reopen when the source is ready again. A rows
+                        // refusal of the copy itself still arrives through the rows stream and tears down.
+                        pane.source_lost = true;
+                        pane.status = SharedString::default();
+                        pane.tell_offline(cx);
+                    } else {
+                        pane.on_rows(
+                            crate::features::session::client::session_client::RowUpdate::Refused {
+                                code: "source_changed".into(),
+                                message: "The selected row source changed.".into(),
+                            },
+                            cx,
+                        )
+                    }
                 }
                 ComposerEvent::SourceLost(_) => {}
             }),

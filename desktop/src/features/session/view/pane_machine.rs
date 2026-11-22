@@ -38,7 +38,13 @@ impl SessionPane {
                     .map(|item| {
                         format!(
                             "{:?}",
-                            (&item.ssh, item.port, &item.token_file, item.reachable)
+                            (
+                                &item.ssh,
+                                item.port,
+                                &item.token_file,
+                                item.reachable,
+                                item.live
+                            )
                         )
                     })
             })
@@ -49,12 +55,16 @@ impl SessionPane {
         let still_offline = offline.is_some();
         self.composer.update(cx, |composer, cx| {
             composer.set_offline(offline, cx);
-            composer.set_owner(agent, machine, route, cx);
+            composer.set_owner(agent, machine.clone(), route, cx);
         });
-        if still_offline {
+        // Reachable is not ready: a returned machine answers probes before its mirror is live, and a reopen then
+        // only earns the next refusal. The backend pushes the mirror's readiness on this same list (`live`), and
+        // that is what a lost source waits for; while it waits, no attempt is spent and none is counted.
+        let ready = !still_offline && Machines::live(machine.as_deref(), cx);
+        if !ready {
             self.source_reopens = 0;
         }
-        if self.source_lost && !still_offline {
+        if self.source_lost && ready {
             self.reopen_lost_source(cx);
         }
     }

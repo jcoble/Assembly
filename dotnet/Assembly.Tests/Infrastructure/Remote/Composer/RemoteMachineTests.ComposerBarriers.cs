@@ -111,7 +111,7 @@ public sealed partial class RemoteMachineTests
         await app.StartAsync();
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://{new Uri(app.Urls.Single()).Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token = DesktopToken, protocol = 1 }));
+        await SendTextAsync(socket, JsonSerializer.Serialize(new { t = "hello", token = DesktopToken, protocol = 2 }));
         Assert.Contains("welcome", await SocketReadAsync(socket));
         await captured.ProbeAsync(default);
         await captured.ReadMirrorOwnerAsync(default);

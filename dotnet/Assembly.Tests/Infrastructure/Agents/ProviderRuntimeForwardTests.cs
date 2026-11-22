@@ -28,7 +28,7 @@ public sealed partial class ProviderRuntimeForwardTests
             using var socket = new ClientWebSocket();
             var address = hosts.Mac.Address;
             await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), default);
-            await Send(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+            await Send(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
             Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
 
             var selection = new ProviderRuntimeReadArgs(hosts.Remote.Runtime.Machine, "codex");

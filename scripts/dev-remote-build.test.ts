@@ -16,7 +16,7 @@ test('a completed backend is hash-verified and reused without another build; cor
   for(const directory of [source,lane,bin])await fs.mkdir(directory);
   const files={
     'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>',
-    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 1;',
+    'dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 2;',
     'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs':'const int FormatVersion = 5;',
   };
   for(const [name,content] of Object.entries(files)){await fs.mkdir(join(source,name,'..'),{recursive:true});await fs.writeFile(join(source,name),content)}
@@ -63,7 +63,7 @@ test('going back to a commit deployed before reuses its release: no build, no fa
   for(const directory of [source,lane,bin])await fs.mkdir(directory);
   const git=(...args:string[])=>exec('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid',...args],{cwd:source});
   const row=join(source,'dotnet/Assembly.Application/Features/Chat/Rows/RowStore.cs');
-  for(const [name,content] of Object.entries({'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>','dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 1;'}))
+  for(const [name,content] of Object.entries({'dotnet/Assembly.Remote/Assembly.Remote.csproj':'<Project/>','dotnet/Assembly.Infrastructure/Socket/SocketConnection.cs':'const int Protocol = 2;'}))
     {await fs.mkdir(join(source,name,'..'),{recursive:true});await fs.writeFile(join(source,name),content)}
   await fs.mkdir(join(row,'..'),{recursive:true});await fs.writeFile(row,'const int FormatVersion = 5;');
   await git('init','-q');await git('add','.');await git('commit','-qm','first');

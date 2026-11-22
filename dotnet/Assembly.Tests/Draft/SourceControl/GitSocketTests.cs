@@ -169,7 +169,7 @@ public sealed partial class GitSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(_address, CancellationToken.None);
-        await SendAsync(socket, """{"t":"hello","token":"git-token","protocol":1}""");
+        await SendAsync(socket, """{"t":"hello","token":"git-token","protocol":2}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;
     }

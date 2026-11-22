@@ -111,7 +111,7 @@ public sealed partial class AdapterEffectsTests
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         using var socket = new ClientWebSocket(); await socket.ConnectAsync(new UriBuilder(address) { Scheme = "ws", Path = "/socket" }.Uri, default);
-        await SenderFrame(socket, "{\"t\":\"hello\",\"protocol\":1,\"token\":\"sender-owner-token\"}");
+        await SenderFrame(socket, "{\"t\":\"hello\",\"protocol\":2,\"token\":\"sender-owner-token\"}");
         Assert.Equal("welcome", (await SenderReply(socket)).GetProperty("t").GetString());
         var target = new SessionOpenTarget("engine", user.FromMachine!, user.From!, RequestId: 42);
         await SenderFrame(socket, $$"""{"t":"call","id":1,"feature":"sessions","method":"open_target","args":{{JsonSerializer.Serialize(target, SessionOpenJson.Default.SessionOpenTarget)}}}""");

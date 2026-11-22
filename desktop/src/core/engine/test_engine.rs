@@ -51,7 +51,7 @@ fn answer(state: &mut Seeded, frame: &Value) -> Vec<Reply> {
         frame["method"].as_str(),
     ) {
         (Some("hello"), ..) => vec![Reply::Frame(
-            json!({"t":"welcome","protocol":1,"machine":"Friendly","engine":MACHINE}),
+            json!({"t":"welcome","protocol":2,"machine":"Friendly","engine":MACHINE}),
         )],
         (Some("sub"), ..) if frame["topic"] == "machines" => {
             let items = (state.machines.iter())

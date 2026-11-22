@@ -49,7 +49,7 @@ fn engine(pull_request: Value, rows: Vec<Value>) -> FakeBackend {
             frame["method"].as_str(),
         ) {
             (Some("hello"), ..) => vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"Friendly","engine":OWNER}),
+                json!({"t":"welcome","protocol":2,"machine":"Friendly","engine":OWNER}),
             )],
             (Some("sub"), Some("prs"), _) if frame["stream"] == "engine" => vec![Reply::Frame(
                 json!({"t":"engine_snapshot","id":id,"machine":OWNER,"through":1,"items":[pull_request.clone()],"more":false}),

@@ -1,3 +1,7 @@
+//! Tests for the pull request pane against a fake backend. `fake` starts a backend that welcomes the desktop, lists the
+//! given projects, answers each source lookup (refusing or holding back the first answer when a test asks it to) and
+//! lists one pull request. It records every call, so a test can check which project and source each read went through.
+//! The helpers below open a pane in a test window and let its work settle.
 use super::{PrMerged, PrPane};
 use crate::core::intents::open_pull_requests::OpenPullRequests;
 use crate::core::socket::{
@@ -156,7 +160,7 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
-                json!({"t":"welcome","protocol":1,"machine":"box","engine":"box"}),
+                json!({"t":"welcome","protocol":2,"machine":"box","engine":"box"}),
             )];
         }
         // Record the call before waking the test, so a wait on the calls seen cannot wake too early and then sleep.

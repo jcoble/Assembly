@@ -75,7 +75,8 @@ public sealed class SessionOpenCallsTests
     {
         await using var hosts = new TwoHosts(forwardCommands: true);
         OpenGate owner = null!; ICallRegistry macCalls = null!;
-        hosts.Remote.AdditionalFeatures = calls => Register(hosts.Remote, owner = new(calls));
+        // A never-saved session downloads its newest screen with the open (TSK-1692), so the owner serves its rows reads.
+        hosts.Remote.AdditionalFeatures = calls => { Register(hosts.Remote, owner = new(calls)); ServeRows(hosts.Remote, calls); };
         hosts.Mac.AdditionalFeatures = calls => macCalls = calls;
         await hosts.Start();
         var target = Seed(hosts.Remote, "remote-history", root: "/recorded-owner-root");
@@ -167,6 +168,14 @@ public sealed class SessionOpenCallsTests
         new SessionOpenCalls(host.Fixture.Db, host.Runtime, host.Sessions,
             new MachineSet(new FakeMachine(null, host.Sessions)), connections).Register(calls);
 
+    // The owner's rows reads, which a saved copy downloads from.
+    private static void ServeRows(TwoHosts.Host host, ICallRegistry calls)
+    {
+        var rows = RowStore.Open(host.Fixture.Db);
+        new RowsFeature(new LiveHub(rows, topics: host.Topics), rows, host.Sessions, new MachineSet(new FakeMachine(null, host.Sessions)),
+            new Assembly.Infrastructure.Chat.DiskPathProbe(), Path.GetTempPath()).Register(calls);
+    }
+
     private static SessionOpenTarget Seed(TwoHosts.Host host, string id, bool engine = false, string? root = null)
     {
         host.Sessions.Add(id, "codex", "source-derived-repo", machine: null!);
@@ -225,7 +234,7 @@ public sealed class SessionOpenCallsTests
     {
         var socket = new ClientWebSocket(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket{(bulk ? "/bulk" : "")}"), timeout.Token);
-        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":1}");
+        await Send(socket, "{\"t\":\"hello\",\"token\":\"isolated-token\",\"protocol\":2}");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call(WebSocket socket, long id, SessionOpenTarget target)

@@ -102,7 +102,7 @@ public sealed class BoardRemoteTests(Xunit.Abstractions.ITestOutputHelper output
                 new RemoteConfig("Workbox Test", address, "board-test"));
             using var socket = new ClientWebSocket();
             await socket.ConnectAsync(new UriBuilder(desktop.Address) { Scheme = "ws", Path = "/socket" }.Uri, CancellationToken.None);
-            await BoardSocketTests.Send(socket, """{"t":"hello","protocol":1,"token":"desktop-test"}""");
+            await BoardSocketTests.Send(socket, """{"t":"hello","protocol":2,"token":"desktop-test"}""");
             await BoardSocketTests.Read(socket);
             await BoardSocketTests.Send(socket, """{"t":"call","id":2,"feature":"sessions","method":"create","args":{"agent":"codex","clientId":"board-remote","machine":"Workbox Test"}}""");
             var created = await BoardSocketTests.Read(socket);

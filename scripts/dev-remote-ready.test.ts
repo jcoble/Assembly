@@ -91,7 +91,7 @@ test('a stopped installed host is started, and probed once it answers', { skip: 
   writeFileSync(dll, `const http=require('node:http'),crypto=require('node:crypto');
 setTimeout(()=>{const s=http.createServer();s.on('upgrade',(q,p)=>{
  p.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: '+crypto.createHash('sha1').update(q.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')+'\\r\\n\\r\\n');
- p.on('error',()=>{});let said=false;p.on('data',d=>{if((d[0]&15)===8){p.end(Buffer.from([0x88,0]));return}if(said)return;said=true;const b=Buffer.from(JSON.stringify({t:'welcome',machine:'workbox-test',protocol:1,format:5,commit:'${'c'.repeat(40)}',backendIdentity:'id-1',engine:'e'}));p.write(Buffer.concat([Buffer.from([0x81,126,b.length>>8,b.length&255]),b]));});
+ p.on('error',()=>{});let said=false;p.on('data',d=>{if((d[0]&15)===8){p.end(Buffer.from([0x88,0]));return}if(said)return;said=true;const b=Buffer.from(JSON.stringify({t:'welcome',machine:'workbox-test',protocol:2,format:5,commit:'${'c'.repeat(40)}',backendIdentity:'id-1',engine:'e'}));p.write(Buffer.concat([Buffer.from([0x81,126,b.length>>8,b.length&255]),b]));});
 });s.listen(${port},'127.0.0.1');},1500);`);
   writeFileSync(state, JSON.stringify({ pid: '0', starts: 0 }));
   writeFileSync(join(home, 'bin/systemctl'), `#!/usr/bin/env node

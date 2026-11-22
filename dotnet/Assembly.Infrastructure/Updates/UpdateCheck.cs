@@ -22,6 +22,10 @@ internal static class UpdateCheck
     internal static IReadOnlyList<UpdateItem> Remote(RemoteBackend? backend, InstalledTools? installed, UpdateWanted wanted) =>
         [Backend(backend, wanted), .. Tools(installed, wanted)];
 
+    /// <summary>A remote that refused this computer's hello for an older protocol: its backend is behind whatever it says.</summary>
+    internal static IReadOnlyList<UpdateItem> OlderProtocol(InstalledTools? installed, UpdateWanted wanted) =>
+        [new("backend", "Backend", null, wanted.Backend, wanted.Backend is null ? UpdateItem.Unknown : UpdateItem.Behind), .. Tools(installed, wanted)];
+
     // A host that answers with no number is from before there were numbers.
     private static UpdateItem Backend(RemoteBackend? backend, UpdateWanted wanted) =>
         new("backend", "Backend", backend?.Version, wanted.Backend,

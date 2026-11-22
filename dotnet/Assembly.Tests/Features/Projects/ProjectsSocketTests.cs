@@ -124,7 +124,7 @@ public sealed class ProjectsSocketTests : IAsyncLifetime
     private async Task<ClientWebSocket> Open()
     {
         var socket = new ClientWebSocket(); await socket.ConnectAsync(_address, default);
-        await Send(socket, """{"t":"hello","protocol":1,"token":"test-projects"}""");
+        await Send(socket, """{"t":"hello","protocol":2,"token":"test-projects"}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static async Task<JsonElement> Call(WebSocket socket, string method, string args)

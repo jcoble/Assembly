@@ -49,12 +49,15 @@ internal static class Schema
     // rows_summary holds only the kinds a summary reads, so deltas, messages and tools pay nothing for it.
     public const string Create = $"""
         CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY, next_seq INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS remote_copy(session_id TEXT PRIMARY KEY, machine TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('downloading','complete')), head INTEGER, count INTEGER);
         CREATE TABLE IF NOT EXISTS rows(session_id TEXT NOT NULL, seq INTEGER NOT NULL, run_id TEXT, item_id TEXT,
           kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (session_id, seq));
         CREATE INDEX IF NOT EXISTS rows_item ON rows(session_id, item_id, kind, seq);
         CREATE INDEX IF NOT EXISTS rows_summary ON rows(session_id, kind, item_id, seq) WHERE {SummaryKinds};
         CREATE TABLE IF NOT EXISTS tool_details(session_id TEXT NOT NULL, item_id TEXT NOT NULL, input TEXT, output TEXT,
-          diff TEXT, path TEXT, output_source TEXT, acp_session_id TEXT, PRIMARY KEY (session_id, item_id));
+          diff TEXT, path TEXT, output_source TEXT, acp_session_id TEXT, output_total INTEGER, diff_total INTEGER,
+          truncated INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (session_id, item_id));
         """;
 
     /// <summary>

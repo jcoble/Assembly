@@ -376,7 +376,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         using (var unauthorized = new ClientWebSocket())
         {
             await unauthorized.ConnectAsync(_address, CancellationToken.None);
-            await Send(unauthorized, """{"t":"hello","token":"wrong","protocol":1}""");
+            await Send(unauthorized, """{"t":"hello","token":"wrong","protocol":2}""");
             var response = await unauthorized.ReceiveAsync(new ArraySegment<byte>(new byte[100]), CancellationToken.None).WaitAsync(Wait);
             Assert.Equal(WebSocketMessageType.Close, response.MessageType);
             Assert.Equal(4401, (int)unauthorized.CloseStatus!);
@@ -403,7 +403,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         ISocketSubscription? engine = null;
         var connection = new SocketConnection(pair.Server, calls, _f.Time);
         var running = connection.RunAsync(Encoding.UTF8.GetBytes("token"), _runtime.Machine, CancellationToken.None);
-        await Send(pair.Client, """{"t":"hello","token":"token","protocol":1}""");
+        await Send(pair.Client, """{"t":"hello","token":"token","protocol":2}""");
         await Read(pair.Client);
         pair.BlockSends = true;
         connection.Send(SocketDispatcher.Frame(new ResultFrame(99, JsonSerializer.SerializeToElement("blocked", EngineJson.Default.String)), SocketJson.Default.ResultFrame));
@@ -482,7 +482,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(bulk ? new(_address + "/bulk") : _address, CancellationToken.None);
-        await Send(socket, """{"t":"hello","token":"token","protocol":1}""");
+        await Send(socket, """{"t":"hello","token":"token","protocol":2}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
         return socket;
     }

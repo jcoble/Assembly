@@ -284,7 +284,7 @@ public sealed partial class EngineHostTests
         {
             var socket = new ClientWebSocket();
             await socket.ConnectAsync(new Uri($"ws://{_address.Authority}/socket{(bulk ? "/bulk" : "")}"), CancellationToken.None);
-            await Send(socket, new { t = "hello", token = "engine-token", protocol = 1 });
+            await Send(socket, new { t = "hello", token = "engine-token", protocol = 2 });
             Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString());
             return socket;
         }

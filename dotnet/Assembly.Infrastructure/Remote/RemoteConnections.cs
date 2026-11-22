@@ -95,6 +95,10 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
 
     internal RemoteMachine? ByName(string name) => _active.TryGetValue(name, out var active) ? active.Machine : null;
 
+    /// <summary>Whether the named machine's mirror is live now: connected, with its identity verified.</summary>
+    internal async Task<bool> LiveAsync(string name, CancellationToken ct) =>
+        _active.TryGetValue(name, out var active) && await active.Mirror.CaptureLiveBindingAsync(ct) is not null;
+
     internal RemoteMachine? ByEngineMachine(IAppDatabase db, string machine)
     {
         var name = db.QueryFirst("SELECT name FROM engine_mirror WHERE machine=$machine AND state<>'retired'",
@@ -265,14 +269,25 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         var cli = new CliRefresh();
                         lock (_gate) _cliRefresh[name] = cli;
                         mirror.CaughtUp += () => RequestCliLocator(name, remote, mirror, capturedProfile!, cli);
+                        // The machines list carries the mirror's readiness: reachable alone comes earlier.
+                        mirror.CaughtUp += () => scoped.Live(name, true);
+                        mirror.LostReadiness += () => { if (!mirror.HasLiveBinding) scoped.Live(name, false); };
                         _active[name] = (remote, mirror, tunnel, scoped, opened.Config with { Name = name }, profile);
                         tunnel = null;
                         _machines.Set(remote);
                         remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));
                         if (probe) await _feature.ConnectAsync(remote, stop.Token);
                         else
-                            try { await remote.ProbeAsync(stop.Token); }
-                            catch (MachineUnreachable) { }
+                        {
+                            try
+                            {
+                                await remote.ProbeAsync(stop.Token);
+                                // Let startup subscribers see the initial live fact in their snapshot.
+                                // A stalled mirror must not keep the desktop from opening with its saved copy.
+                                await mirror.InitialFollow.WaitAsync(TimeSpan.FromSeconds(5), stop.Token);
+                            }
+                            catch (Exception error) when (error is MachineUnreachable or TimeoutException) { }
+                        }
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                     catch (Exception error) { scoped.Unreachable(name, error.Message); }

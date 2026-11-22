@@ -156,7 +156,7 @@ public sealed partial class MessageReadSocketTests
     {
         var socket = new ClientWebSocket();
         await socket.ConnectAsync(new UriBuilder(host.Address) { Scheme = "ws", Path = bulk ? "/socket/bulk" : "/socket" }.Uri, default);
-        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":1}""");
+        await Send(socket, """{"t":"hello","token":"isolated-token","protocol":2}""");
         Assert.Equal("welcome", (await Read(socket)).GetProperty("t").GetString()); return socket;
     }
     private static Task Call(ClientWebSocket socket, int id, string method, object args) => Send(socket, JsonSerializer.Serialize(new { t = "call", id, feature = "messages", method, args }));

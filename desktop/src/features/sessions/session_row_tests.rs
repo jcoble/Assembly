@@ -141,6 +141,7 @@ fn clicking_any_line_of_a_row_opens_it_without_touching_its_arrow(cx: &mut gpui:
                 open: false,
                 on_toggle: Rc::new(move |_| flipped.set(flipped.get() + 1)),
             }),
+            connect: None,
             on_open: Rc::new(move |_, _, _, _| seen.set(seen.get() + 1)),
             on_mark: Rc::new(|_, _, _| {}),
         },
