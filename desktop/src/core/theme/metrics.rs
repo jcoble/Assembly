@@ -88,10 +88,11 @@ pub const KEY_VALUE_HEIGHT: Pixels = px(40.);
 pub const KEY_COLUMN_WIDTH: Pixels = px(108.);
 /// A connection row.
 pub const CONNECTION_ROW_HEIGHT: Pixels = px(56.);
-/// A file row.
-pub const FILE_ROW_HEIGHT: Pixels = px(32.);
-/// Between a file row's mark, name and folder.
-pub const FILE_ROW_GAP: Pixels = px(9.);
+/// A file row, in source control and in search results: as dense as the old app's 28 px list rows, and still a
+/// comfortable target.
+pub const FILE_ROW_HEIGHT: Pixels = px(28.);
+/// Between a file row's mark, name and folder, the old app's 8.
+pub const FILE_ROW_GAP: Pixels = SPACE[3];
 /// A row in the Files tab's tree.
 pub const TREE_ROW_HEIGHT: Pixels = px(30.);
 /// A count badge's height and narrowest width, as Board's count.
@@ -114,3 +115,6 @@ pub fn composer_shadow() -> Vec<BoxShadow> {
 
 /// How a disabled control is drawn: the whole control at this opacity.
 pub const DISABLED_OPACITY: f32 = 0.45;
+
+/// A status colour laid behind its own text, as a chip's or a ref pill's fill: the colour at this opacity.
+pub const TINT: f32 = 0.12;

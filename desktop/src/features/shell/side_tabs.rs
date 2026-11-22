@@ -1,8 +1,9 @@
-//! The sessions column's tabs (Sessions, Files, Search) as the kit's segmented tab bar, with the look's outline on
-//! its track. Selection and pane drag/drop stay owned by the dock. Called by the dock for the left column's groups.
+//! The sessions column's tabs (Sessions, Files, Search) as the kit's segmented tab bar across the column, the
+//! segments sharing it equally, on the look's capsule track with its outline. Selection and pane drag/drop stay owned
+//! by the dock. Called by the dock for the left column's groups.
 
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::SPACE;
+use crate::core::theme::metrics::{CORNER_PILL, SPACE};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::side_tab;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
@@ -41,6 +42,8 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
     let (select, drop) = (group.clone(), group.clone());
     Tab::new()
         .label(name)
+        // Each segment takes an equal share of the column.
+        .flex_1()
         .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
         .on_click(move |_, window, cx| {
@@ -64,16 +67,17 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
         })
 }
 
-/// The row's space after its last tab, where a dropped pane joins the group at the end, as on the kit's tab bar: one
-/// from another group joins behind the shown one, and one from this group moves to the last place.
+/// The column's right gutter after the bar, where a dropped pane joins the group at the end, as on the kit's tab bar:
+/// one from another group joins behind the shown one, and one from this group moves to the last place. A little wider
+/// than the left margin so it stays easy to drop on.
 fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
     let drop_target = cx.theme().tokens.drop_target;
     let (group, last) = (group.clone(), group.panels().len() - 1);
     div()
         .id("side-tabs-end")
         .h_full()
-        .flex_1()
-        .min_w(SPACE[7])
+        .flex_none()
+        .w(SPACE[9])
         .when(group.is_droppable(), |end| {
             end.drag_over::<DragPanel>(move |end, _, _, _| end.bg(drop_target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
@@ -93,12 +97,14 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
     }
     let look = Look::of(cx);
     let shown = tabs.iter().position(|(_, _, shown)| *shown);
-    // Sized to its segments rather than the column, so the space after them stays a drop target. The kit's small
-    // size keeps a segment within the header's 30px.
+    // Across the column, as the look's `.seg`; the column's right gutter after it stays the drop target. The kit's
+    // small size keeps a segment within the header's 30px.
     let bar = TabBar::new("side-tabs-bar")
         .segmented()
         .small()
-        .flex_none()
+        .flex_1()
+        .min_w_0()
+        .rounded(CORNER_PILL)
         .border_1()
         .border_color(look.line)
         .when_some(shown, |bar, shown| bar.selected_index(shown))
@@ -109,7 +115,7 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
     h_flex()
         .id("side-tabs")
         .pt(SPACE[4])
-        .px(SPACE[4])
+        .pl(SPACE[4])
         .child(bar)
         .child(end(group, cx))
         .into_any_element()

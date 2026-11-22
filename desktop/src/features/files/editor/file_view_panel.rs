@@ -88,7 +88,19 @@ impl BasePanel for FileView {
 }
 
 impl Panel for FileView {
+    /// The file's name, which the tab shows and names itself by ("README.md", "Close README.md").
+    fn tab_name(&self, _: &App) -> Option<SharedString> {
+        Some(self.file_name())
+    }
+
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.file_name()
+    }
+}
+
+impl FileView {
+    /// The last part of the file's path: `src/limiter.ts` is "limiter.ts".
+    fn file_name(&self) -> SharedString {
         SharedString::from(
             self.path
                 .rsplit('/')

@@ -1,14 +1,16 @@
-//! A row of icon segments in a round track, the look's `.iseg`: the kit's `ButtonGroup` holding one kit `Button` per
-//! segment, 36 wide and 28 high, 2 apart inside a 3px inset track with its line. The picked segment takes the selected
-//! fill and line, the others show the hover wash under the pointer. Callers: the drawer's tool capsule
-//! (features/shell/drawer_buttons.rs).
+//! A row of icon segments in a round track, the look's `.iseg`: one kit `Button` per segment, each its own capsule, 36
+//! wide and 28 high, 2 apart inside a 3px inset capsule track with its line. The picked segment is marked toggled and
+//! takes the selected fill and line, the others show the hover wash under the pointer. Callers: the drawer's tool
+//! capsule (features/shell/drawer_buttons.rs).
 //!
-//! Each segment keeps its own click; the group only draws the track, so leave the group's `on_click` unset.
+//! Not the kit's `ButtonGroup`: it joins its buttons' corners (button_group.rs:183-225), which squared the picked
+//! segment's inner side. The group adds no role of its own, so a plain track loses nothing; each segment keeps its click.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
 use gpui_kit::component::Selectable as _;
-use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_kit::component::h_flex;
 use gpui_kit::*;
 
 use crate::core::theme::look::Look;
@@ -21,9 +23,10 @@ const TRACK_PADDING: Pixels = px(3.);
 const SEGMENT_ICON: Pixels = px(16.);
 
 /// The track; add the segments with `.child(segment(..))`.
-pub fn icon_segments(id: impl Into<ElementId>, cx: &App) -> ButtonGroup {
+pub fn icon_segments(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
     let look = Look::of(cx);
-    ButtonGroup::new(id)
+    h_flex()
+        .id(id)
         .flex_none()
         .p(TRACK_PADDING)
         .gap(SEGMENT_GAP)
@@ -41,8 +44,7 @@ pub fn segment(id: impl Into<ElementId>, icon: IconName, picked: bool, cx: &App)
     } else {
         (look.text_2, transparent_black())
     };
-    // The kit's custom colours: no fill at rest, the hover wash, and the selected fill while pressed or picked. The
-    // segment's own corners win over the group's joined ones.
+    // The kit's custom colours: no fill at rest, the hover wash, and the selected fill while pressed or picked.
     Button::new(id)
         .custom(
             ButtonCustomVariant::new(cx)
@@ -51,6 +53,8 @@ pub fn segment(id: impl Into<ElementId>, icon: IconName, picked: bool, cx: &App)
                 .active(look.fill_selected),
         )
         .selected(picked)
+        // What the kit's group would have said: the picked segment is the pressed one.
+        .toggled(picked)
         .child(Icon::new(icon).size(SEGMENT_ICON))
         .w(SEGMENT.width)
         .h(SEGMENT.height)
