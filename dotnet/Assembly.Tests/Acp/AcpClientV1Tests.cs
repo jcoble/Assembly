@@ -4,7 +4,10 @@ using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp.V2;
 using Assembly.Application.Features.Agents;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Events;
 using Assembly.Infrastructure.Transcript;
 using Assembly.Remote.Record;
 using Assembly.Tests.Core.Acp;
@@ -179,6 +182,49 @@ public sealed class AcpClientV1Tests
         Assert.All(tools, tool => Assert.Equal(approved, tool.Update.GetProperty("toolCallId").GetString()));
         Assert.Equal(status, tools[^1].Update.GetProperty("status").GetString());
         Assert.Single(tools, tool => tool.Update.GetProperty("status").GetString() is "completed" or "failed");
+    }
+
+    [Fact]
+    public async Task An_aliased_run_keeps_its_content_output_and_terminal_detail_alongside_the_approved_diff()
+    {
+        const string approved = "fca527de00e344c0820bcb4c2834c906";
+        await using var replay = await AntigravityAsync();
+        await PromptAsync(replay, FirstSession, 4);
+        Published(replay.Client);
+        var lines = File.ReadLines(Path.Combine(AppContext.BaseDirectory, "Fixtures", Antigravity)).Skip(13).Take(10)
+            .Select(line => JsonNode.Parse(line)!["line"]!.AsObject()).ToList();
+        var turn = replay.Client.PromptAsync(FirstSession, [TextBlock.Of("recorded")], default);
+        var prompt = await replay.Agent.ReadAsync();
+        await replay.Agent.SendAsync(lines[0].ToJsonString() + "\n" + lines[1].ToJsonString());
+        Assert.Equal("allow", (await replay.Agent.ReadAsync()).GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString());
+        var result = lines[4];
+        var resultUpdate = result["params"]!["update"]!.AsObject();
+        resultUpdate.Remove("rawOutput");
+        resultUpdate["content"] = JsonNode.Parse("""
+            [{"type":"content","content":{"type":"text","text":"Created note.txt"}},
+             {"type":"terminal","terminalId":"term-1"}]
+            """);
+        await replay.Agent.SendAsync(lines[3].ToJsonString() + "\n" + result.ToJsonString());
+        await replay.Agent.SendAsync(lines[9].ToJsonString());
+        await replay.Agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await turn.Ended.WaitAsync(Bounded);
+
+        var reader = new UpdateReader();
+        var row = new OpenTool(approved);
+        ToolCallChanged? last = null;
+        foreach (var update in Published(replay.Client))
+            foreach (var changed in reader.Read(update).OfType<ToolCallChanged>())
+            {
+                last = changed;
+                row.Apply(changed.Fields);
+            }
+        var (_, detail) = row.TakeChanges();
+        Assert.NotNull(last);
+        Assert.NotNull(detail);
+        Assert.Equal("Created note.txt", detail.Output);
+        Assert.Equal("content", detail.OutputSource);
+        Assert.Equal(["term-1"], detail.TerminalIds);
+        Assert.Single(last.Fields.Diffs!);
     }
 
     [Fact]

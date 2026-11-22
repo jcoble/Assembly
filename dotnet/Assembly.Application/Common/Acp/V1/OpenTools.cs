@@ -25,6 +25,7 @@ internal sealed class OpenTools
     {
         public readonly HashSet<string> Open = [];
         public readonly Dictionary<string, string> RunOf = [];   // B's id -> A's id
+        public readonly Dictionary<string, IReadOnlyList<JsonElement>> ApprovedDiffs = []; // A's id -> A's diff items
         public readonly HashSet<string> RanThrough = [];         // A ids that finished through their run
         public Approved? Allowed;
         public bool Stopping;
@@ -52,10 +53,19 @@ internal sealed class OpenTools
     public void Answered(string sessionId, JsonElement parameters, bool allowed)
     {
         Approved? approved = null;
+        IReadOnlyList<JsonElement> diffs = [];
         if (allowed && parameters.TryGetProperty("toolCall", out var call) && call.ValueKind == JsonValueKind.Object
             && Text(call, "toolCallId") is { Length: > 0 } id && FirstPath(call) is { } path)
+        {
             approved = new Approved(id, Text(call, "kind"), path);
-        lock (_gate) TurnOf(sessionId).Allowed = approved;
+            diffs = DiffItems(call);
+        }
+        lock (_gate)
+        {
+            var turn = TurnOf(sessionId);
+            turn.Allowed = approved;
+            if (approved is not null && diffs.Count > 0) turn.ApprovedDiffs[approved.ToolCallId] = diffs;
+        }
     }
 
     /// <summary>
@@ -68,6 +78,7 @@ internal sealed class OpenTools
             || Text(received.Update, "toolCallId") is not { Length: > 0 } toolCallId) return received;
         var status = Text(received.Update, "status") ?? (received.Kind == "tool_call" ? "pending" : null);
         string? runOf;
+        IReadOnlyList<JsonElement>? approvedDiffs;
         bool stopped = false;
         lock (_gate)
         {
@@ -81,6 +92,8 @@ internal sealed class OpenTools
             runOf = turn.RunOf.GetValueOrDefault(toolCallId);
             var id = runOf ?? toolCallId;
             if (runOf is null && turn.RanThrough.Contains(id)) return null;
+            if (runOf is null && DiffItems(received.Update) is { Count: > 0 } diffs) turn.ApprovedDiffs[id] = diffs;
+            approvedDiffs = runOf is not null ? turn.ApprovedDiffs.GetValueOrDefault(runOf) : null;
             if (status is "pending" or "in_progress") turn.Open.Add(id);
             else if (status is not null)
             {
@@ -92,14 +105,47 @@ internal sealed class OpenTools
         var update = JsonNode.Parse(received.Update.GetRawText())!.AsObject();
         if (runOf is not null)
         {
-            // The run keeps A's row: A's id, title, kind, diff and location; only its progress and result come through.
+            // The run keeps A's row: A's id, title, kind and location; its progress, raw output and content come through.
+            // UpdateReader clears tool content on any tool_call_update carrying content, so empty content is dropped and
+            // non-empty content without a diff keeps A's approval diffs in front without duplicating them.
             update["sessionUpdate"] = "tool_call_update";
             update["toolCallId"] = runOf;
-            foreach (var own in new[] { "title", "kind", "content", "locations", "rawInput" }) update.Remove(own);
+            foreach (var own in new[] { "title", "kind", "locations", "rawInput" }) update.Remove(own);
+            PreserveApprovedDiffs(update, approvedDiffs);
         }
         if (stopped) update["status"] = "cancelled";
         return received with { Update = UpdateNormalizer.Element(update) };
     }
+
+    private static void PreserveApprovedDiffs(JsonObject update, IReadOnlyList<JsonElement>? approvedDiffs)
+    {
+        if (!update.TryGetPropertyValue("content", out var content)) return;
+        JsonArray items;
+        if (content is JsonArray array && array.Count > 0) items = array;
+        else if (content is JsonObject single)
+        {
+            update.Remove("content");
+            items = new JsonArray(single);
+            update["content"] = items;
+        }
+        else
+        {
+            update.Remove("content");
+            return;
+        }
+        if (approvedDiffs is not { Count: > 0 }
+            || items.OfType<JsonObject>().Any(item => item["type"]?.GetValueKind() == JsonValueKind.String && item["type"]!.GetValue<string>() == "diff"))
+            return;
+        for (var i = approvedDiffs.Count - 1; i >= 0; i--)
+            items.Insert(0, JsonNode.Parse(approvedDiffs[i].GetRawText()));
+    }
+
+    private static IReadOnlyList<JsonElement> DiffItems(JsonElement node) =>
+        node.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array
+            ? content.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object && Text(item, "type") == "diff")
+                .Select(item => item.Clone()).ToArray()
+            : [];
 
     /// <summary>The updates that close the session's open tools at the end of its turn, which forgets the turn.</summary>
     public IReadOnlyList<SessionNotification> Close(string sessionId, string stopReason)
