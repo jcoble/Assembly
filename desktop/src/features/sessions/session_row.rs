@@ -15,6 +15,7 @@ use super::rail_page::RailEntry;
 use super::status::Status;
 use crate::components::three_line_row::{RowArrow, ThreeLineRow};
 use crate::core::navigation::external_urls::session_link;
+use crate::core::state::machines::THIS_MACHINE;
 use crate::core::theme::look::Look;
 use crate::hinted_item::HintedItem;
 
@@ -66,9 +67,9 @@ pub fn status_words(presence: Presence, offline: bool) -> Vec<&'static str> {
     words
 }
 
-/// The machine a row's session is on, by name; a local session is on This Mac.
+/// The machine a row's session is on, by name; a local session is on this machine ("This Mac" on a Mac).
 fn machine_name(entry: &RailEntry) -> String {
-    entry.machine.clone().unwrap_or_else(|| "This Mac".into())
+    entry.machine.clone().unwrap_or_else(|| THIS_MACHINE.into())
 }
 
 /// The rest of a row's spelled-out line: "Workbox Test · lane/rail".
