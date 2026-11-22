@@ -37,6 +37,16 @@ internal sealed class FakeLink : IAgentLink
         return await OpenAsync(acpSessionId, configOptions);
     }
 
+    /// <summary>Answers <c>initialize</c> with a recorded version 1 reply, then <see cref="OpenAsync"/>.</summary>
+    public async Task<JsonElement> StartV1Async(string initializeResult, string? configOptions = null)
+    {
+        await _agent.ReplyAsync(await ReadAsync("initialize"), initializeResult);
+        return await OpenAsync(AcpSessionId, configOptions);
+    }
+
+    /// <summary>Sends one recorded line as it is.</summary>
+    public Task SendAsync(string json) => _agent.SendAsync(json);
+
     /// <summary>
     /// Answers the next <c>session/new</c> (with <paramref name="acpSessionId"/>) or <c>session/resume</c>, with
     /// <paramref name="configOptions"/> if given, and returns the request.

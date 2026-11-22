@@ -231,7 +231,7 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    private static string CanonicalPath(string path)
+    internal static string CanonicalPath(string path)
     {
         var full = System.IO.Path.GetFullPath(path);
         var current = System.IO.Path.GetPathRoot(full)!;
@@ -240,7 +240,8 @@ public sealed class AgentsFile : IReadOnlyList<AgentDescriptor>
         {
             current = System.IO.Path.Combine(current, parts[index]);
             FileSystemInfo info = index == parts.Length - 1 ? new FileInfo(current) : new DirectoryInfo(current);
-            current = info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? current;
+            if (info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                current = CanonicalPath(target.FullName);
         }
         return current;
     }

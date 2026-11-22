@@ -17,9 +17,15 @@ public interface IAgentLauncher
     /// <summary>Whether this owner can reproduce its configured command in its direct program terminal.</summary>
     bool CanRunTerminalAuthentication { get; }
 
+    /// <summary>Changes when known inputs to the composer's catalogue change. Null disables reuse.</summary>
+    string? CatalogueRevision(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, string cwd) => null;
+
     Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         StageTimes stages, CancellationToken cancellationToken);
 
     Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
         IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken);
+
+    /// <summary>Resolves the provider-neutral effective context window policy for this adapter on its host, if any.</summary>
+    ContextLimitPolicy? ContextLimit(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment) => null;
 }
