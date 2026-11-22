@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Desktop.Serve;
@@ -150,6 +151,94 @@ public sealed class ProviderReconcilerSocketTests
             summarySocket.Abort();
             firstSocket.Abort();
             secondSocket.Abort();
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    private sealed class FailingUpdateSource : IUpdateSource
+    {
+        internal const string Secret = "SECRET_INSTALLER_OUTPUT_CANARY";
+
+        public Task<UpdateWanted> WantedAsync(CancellationToken ct, bool fresh = false) =>
+            Task.FromResult(new UpdateWanted(
+                App: null,
+                Backend: null,
+                Adapters: new Dictionary<string, string?>(StringComparer.Ordinal)
+                {
+                    ["claude-agent-acp"] = "2.0.0",
+                    ["codex-acp"] = "2.0.0",
+                },
+                Packaging: "sources",
+                Clis: new Dictionary<string, string?>(StringComparer.Ordinal)));
+
+        public bool StartsRemoteUpdates(string machine) => false;
+
+        public Task InstallAsync(string machine, Action<string> progress, CancellationToken ct) => Task.CompletedTask;
+
+        public Task UpdateAsync(IReadOnlyList<MachineBehind> machines, bool automatic, Action<string> progress, CancellationToken ct) =>
+            throw new CallFailed($"npm ERR! raw installer output {Secret}", "update_failed");
+    }
+
+    // A failed local update's raw installer output must never reach pushed state: the note is a fixed sentence.
+    [Fact]
+    public async Task A_failed_local_update_pushes_a_fixed_sentence_never_the_raw_output()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("assembly-reconcile-failure-").FullName;
+        var home = Directory.CreateDirectory(Path.Combine(tempRoot, "desktop")).FullName;
+        var launcher = new FakeLauncher
+        {
+            Agents =
+            [
+                new("claude", "Claude Code", "claude-agent-acp", [], null, VendorFamily: "claude"),
+                new("codex", "Codex", "codex-acp", [], null, VendorFamily: "codex"),
+            ]
+        };
+
+        try
+        {
+            var homeLock = HomeLock.Take(home);
+            await using var backend = await DesktopBackend.StartAsync(
+                homeLock,
+                home,
+                Token,
+                port: 0,
+                launcher,
+                TextWriter.Null,
+                remote: null,
+                tunnel: null,
+                utilityClis: null,
+                savedRemote: null,
+                engineEffects: null,
+                engineStarted: null,
+                agentsFile: null,
+                loginShell: _ => Task.FromResult<(string?, string?)>((null, null)),
+                programTerminals: null,
+                givenInstall: null,
+                givenUpdateSource: new FailingUpdateSource());
+
+            using var stateSocket = await OpenSocketAsync(backend.Address);
+            using var cmdSocket = await OpenSocketAsync(backend.Address);
+            await SendAsync(stateSocket, new { t = "sub", id = 1, topic = SettingsStateFeature.Topic });
+            await SendAsync(cmdSocket, new
+            {
+                t = "call",
+                id = 2,
+                feature = LocalProviderReconciler.FeatureName,
+                method = LocalProviderReconciler.ReconcileMethod,
+                args = new { machine = "local" }
+            });
+            Assert.Equal("result", (await ReadAsync(cmdSocket)).GetProperty("t").GetString());
+
+            var failed = await WaitForStateAsync(stateSocket, state => LocalUpdateState(state) == MachineUpdateState.Failed);
+            var note = Local(failed).GetProperty("machine").GetProperty("updateNote").GetString();
+            Assert.Equal("Update failed: The update didn't finish.", note);
+            Assert.DoesNotContain(FailingUpdateSource.Secret, failed.GetRawText(), StringComparison.Ordinal);
+
+            stateSocket.Abort();
+            cmdSocket.Abort();
         }
         finally
         {

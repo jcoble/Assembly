@@ -145,11 +145,11 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         var start = new ProcessStartInfo("node", [Path.Combine(root, "scripts/update-machines.ts"), .. arguments])
         { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         using var process = new Process { StartInfo = start };
-        string? last = null;
         void Line(string? line)
         {
             if (string.IsNullOrWhiteSpace(line) || line.StartsWith("[dev-sync timing]", StringComparison.Ordinal)) return;
-            if (!line.StartsWith(Marker, StringComparison.Ordinal)) { last = line; return; }
+            // Raw script output is never kept: only its marked progress lines leave this method.
+            if (!line.StartsWith(Marker, StringComparison.Ordinal)) return;
             using var json = JsonDocument.Parse(line[Marker.Length..]);
             if (json.RootElement.GetProperty("reason").GetString() is { } reason) progress(reason);
         }
@@ -162,7 +162,7 @@ internal sealed class CheckoutUpdateSource(string root, CliReleaseSource npm, IR
         await using var stop = ct.Register(() => { try { if (!process.HasExited) _ = Kill(process.Id, 15); } catch (InvalidOperationException) { } });
         await process.WaitForExitAsync(CancellationToken.None);
         ct.ThrowIfCancellationRequested();
-        if (process.ExitCode != 0) failures.Add(last ?? $"The update exited {process.ExitCode}.");
+        if (process.ExitCode != 0) failures.Add("The update didn't finish.");
     }
 
     private const string Marker = "ASSEMBLY_REMOTE_SYNC ";

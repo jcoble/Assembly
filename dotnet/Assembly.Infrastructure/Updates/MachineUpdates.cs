@@ -151,7 +151,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             throw;
         }
         catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + UpdateDidNotFinish; }
         finally
         {
             _progress.End(UpdateProgress.ThisMachine);
@@ -224,7 +224,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                 await source.InstallAsync(machine, note => status.Updating(machine, true, note), stop);
             }
             catch (CallFailed error) { ending = "Install failed: " + SafeFailure(error); }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + error.Message; }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Install failed: " + UpdateDidNotFinish; }
             finally
             {
                 Free(machine);
@@ -258,8 +258,8 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                 taken = true;
                 await source.RestartAppAsync(note => status.Restarting(true, note), stop);
             }
-            catch (CallFailed error) { ending = "Couldn't restart: " + error.Message; }
-            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Couldn't restart: " + error.Message; }
+            catch (CallFailed error) { ending = "Couldn't restart: " + SafeFailure(error); }
+            catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Couldn't restart into the update."; }
             finally
             {
                 if (taken) Free(null);
@@ -335,7 +335,7 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
             if (machine is null && source.AppReady != readyBefore) source.DropAppReady();
         }
         catch (CallFailed error) { ending = "Update failed: " + SafeFailure(error); }
-        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + error.Message; }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception) { ending = "Update failed: " + UpdateDidNotFinish; }
         finally
         {
             _progress.End(place);
@@ -348,13 +348,20 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
         else Check(machine);
     }
 
-    // Raw command stdout/stderr from RemoteReleaseShell must never leave the backend in a pushed updateNote.
+    // Raw provider or installer output must never leave the backend in a pushed updateNote: the note is
+    // always one of these fixed plain sentences, chosen by the failure's reason alone, never its message.
+    internal const string UpdateDidNotFinish = "The update didn't finish.";
+
     internal static string SafeFailure(CallFailed error) => error.Reason switch
     {
         "ssh_unavailable" => "Could not reach the remote machine over SSH.",
         "remote_busy" => "A session is running on the machine; try again when it finishes.",
         "remote_command_failed" => "The update command failed.",
-        _ => error.Message
+        "no_release" => "No signed release is published yet.",
+        "no_update" => "No update is ready.",
+        "version_readback_mismatch" => "The tool still reports the old version after updating.",
+        "bad_args" => "That update is not supported.",
+        _ => UpdateDidNotFinish
     };
 
     /// <summary>Adapters may be new: agents are read again, and every machine checked again.</summary>

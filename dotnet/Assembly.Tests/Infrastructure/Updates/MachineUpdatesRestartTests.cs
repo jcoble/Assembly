@@ -91,12 +91,12 @@ public sealed class MachineUpdatesRestartTests
         await Until(() => Here(status).Updating);
         source.Tools.SetException(new IOException("no network"));
         await Until(() => !Here(status).Updating);
-        Assert.Equal("Update failed: no network", Here(status).UpdateNote);
+        Assert.Equal("Update failed: The update didn't finish.", Here(status).UpdateNote);
         Assert.Null(Here(status).RestartNote);
 
         Assert.True(updates.RestartApp());
-        await Until(() => Here(status).RestartNote == "Couldn't restart: the disk is full" && !Here(status).Restarting);
-        Assert.Equal("Update failed: no network", Here(status).UpdateNote);
+        await Until(() => Here(status).RestartNote == "Couldn't restart: The update didn't finish." && !Here(status).Restarting);
+        Assert.Equal("Update failed: The update didn't finish.", Here(status).UpdateNote);
 
         // The press is over, so it can be pressed again.
         Assert.True(updates.RestartApp());

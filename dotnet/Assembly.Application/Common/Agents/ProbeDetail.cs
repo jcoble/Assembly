@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 namespace Assembly.Application.Common.Agents;
 
 /// <summary>
-/// Turns a check's raw error output into the scrubbed detail a person may see. Anything that could be a
-/// credential is removed: values from the captured environment, values named as tokens, secrets or keys,
-/// long token-shaped runs, and URL query strings. Unrecognised shapes fail closed (redacted), never through.
+/// Turns a check's raw error output into the scrubbed detail a person may see (the Details view only;
+/// pushed failure text is a fixed sentence, never this). Anything that could be a credential is removed:
+/// values from the captured environment, values named as tokens, secrets or keys, long token-shaped runs,
+/// and URL query strings. Home paths become <c>~</c>. Unrecognised token shapes fail closed (redacted).
 /// </summary>
 public static partial class ProbeDetail
 {
@@ -24,6 +25,10 @@ public static partial class ProbeDetail
                     text = text.Replace(value, Redacted, StringComparison.Ordinal);
             }
         }
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (home.Length >= 4)
+            text = text.Replace(home, "~", StringComparison.Ordinal);
+        text = HomePath().Replace(text, "~");
         text = UrlQuery().Replace(text, "$1?" + Redacted);
         text = NamedValue().Replace(text, match => match.Groups[1].Value + match.Groups[2].Value + Redacted);
         text = BearerValue().Replace(text, "$1" + Redacted);
@@ -44,4 +49,7 @@ public static partial class ProbeDetail
 
     [GeneratedRegex(@"[A-Za-z0-9_\-+/=]{24,}")]
     private static partial Regex LongRun();
+
+    [GeneratedRegex(@"(?:/Users/|/home/|[A-Za-z]:\\Users\\)[^/\\\s""':]+")]
+    private static partial Regex HomePath();
 }

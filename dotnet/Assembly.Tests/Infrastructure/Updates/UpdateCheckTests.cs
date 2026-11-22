@@ -174,7 +174,7 @@ public sealed class UpdateCheckTests
         Behind(status, "box");
         Assert.True(updates.Start());
         await Until(() => status.Items[1].UpdateNote is not null && !status.Items[1].Updating);
-        Assert.Equal("Update failed: compile error", status.Items[1].UpdateNote);
+        Assert.Equal("Update failed: The update didn't finish.", status.Items[1].UpdateNote);
         await Until(() => status.Items[1].Updates is { } items && items.All(item => item.Kind != "backend" || item.Current is null));
         Behind(status, "box");
         Assert.True(updates.Start());
@@ -328,7 +328,7 @@ public sealed class UpdateCheckTests
             var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new(null, [Item("adapter", "codex-acp")])], false, notes.Add, CancellationToken.None));
             Assert.Equal(["Waiting."], notes);
             Assert.Equal($"--this-machine --home {root}", File.ReadAllText(Path.Combine(root, "scripts/args")));
-            Assert.Equal("Workbox Test sync: nope", failed.Message);
+            Assert.Equal("The update didn't finish.", failed.Message);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -481,7 +481,7 @@ public sealed class UpdateCheckTests
         welcome.Status.Welcomed = null;
         welcome.Say();
         await updates.CheckAsync("box", default);
-        await Until(() => welcome.Status.Items[1].UpdateNote == "Update failed: no release" && !welcome.Status.Items[1].Updating);
+        await Until(() => welcome.Status.Items[1].UpdateNote == "Update failed: The update didn't finish." && !welcome.Status.Items[1].Updating);
         // The failed update's own recheck and every later hello come back behind, and start nothing more.
         await updates.CheckAsync("box", default);
         await updates.CheckAsync("box", default);
@@ -539,7 +539,7 @@ public sealed class UpdateCheckTests
         Assert.False(updates.Start());
         finish.SetResult();
         await Until(() => !status.Items[1].Updating);
-        Assert.Equal("Install failed: Port 9797 on box is in use by x.", status.Items[1].UpdateNote);
+        Assert.Equal("Install failed: The update didn't finish.", status.Items[1].UpdateNote);
     }
 
     [Fact]
