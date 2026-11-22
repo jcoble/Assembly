@@ -5,6 +5,9 @@ public static class AcpMethods
 {
     public const string AuthLogin = "auth/login";
     public const string AuthLogout = "auth/logout";
+    /// <summary>Version 1 sign-in and sign-out; the body is the same as <see cref="AuthLogin"/> and <see cref="AuthLogout"/>.</summary>
+    public const string Authenticate = "authenticate";
+    public const string Logout = "logout";
     public const string AuthStatusUpdate = "_auth/status_update";
     public const string ElicitationComplete = "elicitation/complete";
     public const string Initialize = "initialize";
