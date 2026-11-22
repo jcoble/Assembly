@@ -21,6 +21,9 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
     private sealed class Entry(RemoteReleaseJob job)
     {
         internal RemoteReleaseJob Job = job;
+        // The failure as it was thrown, for the waiter: the job record holds only its safe sentence,
+        // but the caller keeps the real message, reason and tool (pushed notes sanitize at their edge).
+        internal CallFailed? Failure;
         internal readonly CancellationTokenSource Cancel = new();
         internal readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Action<string>? Progress;
@@ -66,6 +69,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
         }
         await Run(entry, saved, act, ct);
         ct.ThrowIfCancellationRequested();
+        if (entry.Failure is { } failure) throw new CallFailed(failure.Message, failure.Reason, failure.Tool);
         if (entry.Job.State == "failed") throw new CallFailed(entry.Job.Message ?? "The install failed.", entry.Job.ErrorCode ?? "install_failed");
     }
 
@@ -79,7 +83,7 @@ internal sealed class RemoteReleaseJobs(RemoteReleaseInstall install,
             Change(entry, job => job with { State = "succeeded" });
         }
         catch (OperationCanceledException) { Change(entry, job => job with { State = "cancelled", ErrorCode = "cancelled" }); }
-        catch (CallFailed failed) { Change(entry, job => job with { State = "failed", ErrorCode = failed.Reason ?? "install_failed", Message = MachineUpdates.SafeFailure(failed) }); }
+        catch (CallFailed failed) { entry.Failure = failed; Change(entry, job => job with { State = "failed", ErrorCode = failed.Reason ?? "install_failed", Message = MachineUpdates.SafeFailure(failed) }); }
         catch (Exception error) when (error is IOException or InvalidOperationException) { Change(entry, job => job with { State = "failed", ErrorCode = "install_failed", Message = error.Message }); }
         finally { entry.Done.TrySetResult(); }
     }
