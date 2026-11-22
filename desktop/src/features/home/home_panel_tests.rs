@@ -193,6 +193,17 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
                     {
                         server.bump_after_read = false;
                         server.revision += 1;
+                        // The other editor's save changed this provider's other field (the
+                        // config folder), which this editor never touched.
+                        server.settings.insert(
+                            provider.clone(),
+                            json!({
+                                "binaryPath": "/bin/cli",
+                                "configHome": "/other-editor-config",
+                                "shadowHome": null,
+                                "launchArguments": []
+                            }),
+                        );
                     }
                     vec![Reply::Frame(json!({"t":"result","id":id,"result":reply}))]
                 }
@@ -395,6 +406,11 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
     assert_eq!(saves[1]["provider"], json!("claude"));
     assert_eq!(saves[1]["expectedRevision"], json!("rev-3"));
     assert_eq!(saves[1]["settings"]["binaryPath"], json!("/changed-claude"));
+    // The field this editor never changed keeps the other editor's value, not the stale text.
+    assert_eq!(
+        saves[1]["settings"]["configHome"],
+        json!("/other-editor-config")
+    );
     until("the saved notice", &mut changes, &changed, || {
         cx.run_until_parked();
         let panel = panel(cx);

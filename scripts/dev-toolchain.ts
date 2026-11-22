@@ -128,17 +128,26 @@ export async function ensureTools(root: string, adapters: string, descriptor: st
     } finally { await fs.rm(stage, { recursive: true, force: true }); }
   }
   }
+  // A CLI path the owner saved (Advanced) survives a managed update: remember each one that is not a
+  // managed copy, so the check below expects it back instead of the new managed path.
+  const priorAgents = await readAgents(descriptor).catch(() => ({} as Record<string, { cli?: string; args: string[] }>));
+  const ownerCli = (id: string) => {
+    const saved = priorAgents[id]?.cli;
+    return saved && !new RegExp('/clis/[^/]+/node_modules/\\.bin/' + id + '$').test(saved) ? saved : undefined;
+  };
   await run('bash', [join(root, 'dotnet/scripts/agents-file.sh'), adapters, descriptor, ...(keepAdapters ? [] : [assets])], { cwd: root, signal, live: true, env: { ...environment, ASSEMBLY_KEEP_CURRENT_ADAPTERS: keepAdapters ? '1' : '' } });
   const agents = await readAgents(descriptor);
   const packageRecords = [] as { path: string; version: string }[];
   const entries = [] as string[];
   for (const [index, id] of ['claude', 'codex'].entries()) {
     const agent = agents[id];
-    if (agent?.cli !== join(cli, 'node_modules/.bin', id) || !agent.args?.[0]?.startsWith(adapters + '/bundles/')) throw Error('managed provider descriptor did not adopt current tools');
+    const managed = join(cli, 'node_modules/.bin', id);
+    if (agent?.cli !== (ownerCli(id) ?? managed) || !agent.args?.[0]?.startsWith(adapters + '/bundles/')) throw Error('managed provider descriptor did not adopt current tools');
     const bundle = agent.args[0].split('/node_modules/')[0];
     packageRecords.push({ path: join(bundle, 'node_modules', packages[index], 'package.json'), version: versions[packages[index]] });
     packageRecords.push({ path: join(cli, 'node_modules', packages[index + 2], 'package.json'), version: versions[packages[index + 2]] });
-    entries.push(agent.args[0], agent.cli);
+    // The managed copy is the entry toolsCurrent verifies, even when the descriptor names the owner's own.
+    entries.push(agent.args[0], managed);
   }
   const state = { key, sources, versions, packages: packageRecords, entries, descriptorSha: createHash('sha256').update(await fs.readFile(descriptor)).digest('hex') };
   const temporary = join(adapters, 'dev-tools.' + randomUUID());

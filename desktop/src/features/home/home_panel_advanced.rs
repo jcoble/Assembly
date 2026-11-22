@@ -29,11 +29,14 @@ const LABELS: [&str; 2] = ["CLI path", "Config folder"];
 /// The accessibility id part of each of the two fields, in the same order.
 const PARTS: [&str; 2] = ["cli-path", "config-folder"];
 
-/// One machine line's Advanced editor: its four fields once made, and where its read and save stand.
+/// One machine line's Advanced editor: its two fields once made, and where its read and save stand.
 #[derive(Default)]
 pub(super) struct MachineEdit {
     /// The text fields, made when the grower first draws with values to show.
     pub(super) fields: Option<[Entity<InputState>; 2]>,
+    /// The values the fields were filled with (and a save last landed); a field still holding its
+    /// filled value is one the person did not change.
+    filled: Option<[Option<String>; 2]>,
     /// The values the last read or save returned; the fields are made from these.
     loaded: Option<RuntimeSettings>,
     /// The revision the last read or save returned, which a save must name.
@@ -69,7 +72,7 @@ struct RuntimeReply {
 }
 
 impl HomePanel {
-    /// The Advanced grower's body: the four fields and Save, or why they aren't there yet. The first draw
+    /// The Advanced grower's body: the two fields and Save, or why they aren't there yet. The first draw
     /// starts the read; the fields are made when its answer is in.
     pub(super) fn advanced_body(
         &mut self,
@@ -97,7 +100,9 @@ impl HomePanel {
             for (field, value) in fields.iter().zip(values) {
                 field.update(cx, |field, cx| field.set_value(value, window, cx));
             }
-            self.edits.entry(key.clone()).or_default().fields = Some(fields);
+            let edit = self.edits.entry(key.clone()).or_default();
+            edit.filled = Some([settings.binary_path.clone(), settings.config_home.clone()]);
+            edit.fields = Some(fields);
         }
         let edit = self.edits.entry(key.clone()).or_default();
         if edit.fields.is_none() {
@@ -231,13 +236,25 @@ impl HomePanel {
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         };
         let loaded = edit.loaded.clone().unwrap_or_default();
+        // Only what changed is this editor's to write: a field still holding the value it was
+        // filled with sends the latest read's value, so a retry after a stale-revision refresh
+        // cannot put back the text another editor has since replaced.
+        let filled = edit.filled.clone();
+        let current = [loaded.binary_path.clone(), loaded.config_home.clone()];
+        let merged: [Option<String>; 2] = std::array::from_fn(|index| {
+            let typed = value(index);
+            match &filled {
+                Some(filled) if filled[index] == typed => current[index].clone(),
+                _ => typed,
+            }
+        });
         let args = json!({
             "machine": engine_machine,
             "provider": provider,
             "expectedRevision": edit.revision,
             "settings": {
-                "binaryPath": value(0),
-                "configHome": value(1),
+                "binaryPath": merged[0],
+                "configHome": merged[1],
                 "shadowHome": loaded.shadow_home,
                 "launchArguments": loaded.launch_arguments,
             },
@@ -261,6 +278,11 @@ impl HomePanel {
                     let stale = match outcome {
                         Outcome::Ok(reply) => {
                             edit.revision = reply.revision;
+                            // What landed is the new "unchanged" mark for the next save.
+                            edit.filled = Some([
+                                reply.settings.binary_path.clone(),
+                                reply.settings.config_home.clone(),
+                            ]);
                             edit.loaded = Some(reply.settings);
                             edit.notice = Some("Saved.".into());
                             false
