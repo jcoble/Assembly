@@ -161,7 +161,7 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                 return;
             }
 
-            var (toolsBehind, adaptersNewer) = SelectToolsToUpdate(localItems, enabledSpecs);
+            var (toolsBehind, adaptersNewer, repair) = SelectToolsToUpdate(localItems, enabledSpecs);
             if (toolsBehind.Count == 0)
             {
                 if (fresh)
@@ -177,7 +177,7 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                 return;
 
             var adaptersWereBehind = toolsBehind.Any(item => item.Kind == "adapter");
-            var updated = await _updates.UpdateLocalToolsAsync(toolsBehind, adaptersNewer, ct);
+            var updated = await _updates.UpdateLocalToolsAsync(toolsBehind, adaptersNewer, repair, ct);
             if (!updated)
             {
                 if (!fresh) _autoFailed = true;
@@ -194,7 +194,7 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                 var clisBehind = SelectBehindClis(localItems, enabledSpecs);
                 if (clisBehind.Count > 0)
                 {
-                    var cliUpdated = await _updates.UpdateLocalToolsAsync(clisBehind, adaptersNewer: false, ct);
+                    var cliUpdated = await _updates.UpdateLocalToolsAsync(clisBehind, adaptersNewer: false, repair: false, ct);
                     if (cliUpdated)
                         await _updates.CheckLocalAsync(ct, fresh: false);
                     else if (!fresh)
@@ -265,7 +265,7 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
             .ToArray();
     }
 
-    private (IReadOnlyList<UpdateItem> Tools, bool AdaptersNewer) SelectToolsToUpdate(
+    private (IReadOnlyList<UpdateItem> Tools, bool AdaptersNewer, bool Repair) SelectToolsToUpdate(
         IReadOnlyList<UpdateItem> localItems,
         IReadOnlyList<ProviderSpec> enabledSpecs)
     {
@@ -299,6 +299,7 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
         }
 
         // Repair when an enabled provider is missing from agents.json or its rooted adapter entrypoint is missing on disk.
+        var repair = false;
         if (!hasAdapterItem && !adaptersNewer)
         {
             foreach (var spec in enabledSpecs)
@@ -312,12 +313,13 @@ internal sealed class LocalProviderReconciler : IFeature, IAsyncDisposable
                 if (missingDescriptor || missingEntryFile)
                 {
                     selected.Add(new UpdateItem("adapter", spec.AdapterPackage, null, null, UpdateItem.Behind));
+                    repair = true;
                     break;
                 }
             }
         }
 
-        return (selected, adaptersNewer);
+        return (selected, adaptersNewer, repair);
     }
 
     private static IReadOnlyList<UpdateItem> SelectBehindClis(

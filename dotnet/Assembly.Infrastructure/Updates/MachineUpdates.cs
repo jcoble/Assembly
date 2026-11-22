@@ -130,9 +130,11 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
     /// <summary>
     /// Installs or updates local adapters/CLIs under the single local update slot, reloading agents on success.
     /// The work was selected before the wait for the slot, so it is re-checked once the slot is held:
-    /// whatever the run ahead already did is not installed a second time.
+    /// whatever the run ahead already did is not installed a second time. An explicit <paramref name="repair"/>
+    /// (a missing descriptor or entry point) is the exception: a bundle reading current through the
+    /// providers that remain cannot prove the missing one back, so the repair item still runs.
     /// </summary>
-    internal async Task<bool> UpdateLocalToolsAsync(IReadOnlyList<UpdateItem> behind, bool adaptersNewer, CancellationToken stop)
+    internal async Task<bool> UpdateLocalToolsAsync(IReadOnlyList<UpdateItem> behind, bool adaptersNewer, bool repair, CancellationToken stop)
     {
         await TakeWhenFreeAsync(ThisApp, () => { }, stop);
         string? ending = null;
@@ -150,6 +152,10 @@ internal sealed class MachineUpdates(IUpdateSource source, MachineStatus status,
                         candidate.Kind == item.Kind && candidate.Name == item.Name && candidate.State == UpdateItem.Behind))
                     .OfType<UpdateItem>()
             ];
+            if (repair
+                && behind.FirstOrDefault(item => item.Kind == "adapter" && item.Wanted is null) is { } repairItem
+                && !stillBehind.Any(item => item.Kind == repairItem.Kind && item.Name == repairItem.Name))
+                stillBehind = [.. stillBehind, repairItem];
             if (stillBehind.Count > 0)
             {
                 var currentAdaptersNewer = current.Any(item => item.Kind == "adapter" && item.State == UpdateItem.Newer);
