@@ -94,6 +94,19 @@ impl Machines {
         })
     }
 
+    /// Whether the machine `name`'s mirror here is caught up, so its sessions' live calls can be captured. This
+    /// machine, a list not started yet and a machine the list doesn't hold have nothing saying they aren't live.
+    pub fn live(name: Option<&str>, cx: &App) -> bool {
+        let Some(name) = name else {
+            return true;
+        };
+        Machines::try_global(cx).is_none_or(|machines| {
+            (machines.read(cx).machines())
+                .find(|held| held.name.as_deref() == Some(name))
+                .is_none_or(|held| held.live)
+        })
+    }
+
     /// Whether the loaded list has no machine `name`. This machine (`None`) and a list not loaded yet aren't missing.
     pub fn missing(name: Option<&str>, cx: &App) -> bool {
         let Some(name) = name else {

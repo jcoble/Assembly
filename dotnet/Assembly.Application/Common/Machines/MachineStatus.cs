@@ -16,7 +16,9 @@ namespace Assembly.Application.Common.Machines;
 /// Restart to Update's own, apart from this machine's tools: what a press is doing or waiting for, or why it failed.
 /// <paramref name="CantUpdate"/> is why this app won't install or update anything on this machine.
 /// <paramref name="UpdatePercent"/> is the one figure across everything in the run, and <paramref name="UpdateCancellable"/>
-/// whether it can still be called off: only until an install starts.
+/// whether it can still be called off: only until an install starts. <paramref name="Live"/> is a remote's mirror
+/// being caught up: it answers probes (<paramref name="Reachable"/>) before its sessions' live calls can be
+/// captured, and only Live says they can.
 /// </summary>
 public sealed record MachineItem(string? Name, string Kind, bool Reachable, string? Reason, bool Checked, string? Ssh = null, int? Port = null, string? TokenFile = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] RemoteBackend? Backend = null,
@@ -30,7 +32,8 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? RestartNote = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? CantUpdate = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int? UpdatePercent = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool UpdateCancellable = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool UpdateCancellable = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Live = false);
 
 /// <summary>One piece the update check looked at: <paramref name="Kind"/> is desktop, backend, adapter or cli.</summary>
 public sealed record UpdateItem(string Kind, string Name, string? Current, string? Wanted, string State)
@@ -188,6 +191,17 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
 
     public void Unreachable(string machine, string reason) => Set(machine, false, reason);
 
+    /// <summary>Whether a remote's mirror is caught up, from its mirror's readiness coming and going.</summary>
+    public void Live(string machine, bool live)
+    {
+        if (_parent is { } parent)
+        {
+            lock (parent._gate) if (_active) parent.Live(machine, live);
+            return;
+        }
+        Change(machine, item => item with { Live = live });
+    }
+
     // A name it doesn't hold is ignored, and an unchanged item isn't swapped.
     private void Set(string machine, bool reachable, string? reason, bool checkedState = true)
     {
@@ -209,6 +223,8 @@ public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes, T
                 Reachable = reachable,
                 Checked = checkedState,
                 Reason = reason,
+                // A machine that isn't answering has no live mirror, whatever it last caught up to.
+                Live = reachable && items[index].Live,
                 OfflineSinceMs = reachable ? null : items[index].OfflineSinceMs ?? (time ?? TimeProvider.System).GetUtcNow().ToUnixTimeMilliseconds()
             };
             _items = next;

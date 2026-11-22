@@ -210,9 +210,7 @@ impl NavigationFixture {
                         .insert(key, (revision + 1, args["snapshot"].clone()));
                     vec![result(json!({"revision":revision+1}))]
                 }
-                (Some("call"), Some("config"), Some("get"), _)
-                    if std::mem::take(&mut state.refuse_config) =>
-                {
+                (Some("call"), Some("config"), Some("get"), _) if state.refuse_config => {
                     vec![Reply::Frame(
                         json!({"t":"error","id":id,"code":"source_changed","message":"The selected row source changed."}),
                     )]
@@ -233,6 +231,7 @@ impl NavigationFixture {
                 (Some("call"), Some("machines"), Some("agents"), _) => vec![result(
                     json!({"agents":[{"id":"source-derived-fixture","name":"Fixture","targetId":"fixture-target"}]}),
                 )],
+                (Some("call"), Some("fixture"), Some("ping"), _) => vec![result(Value::Null)],
                 (Some("call"), Some("fixture"), Some("drop"), _) => vec![Reply::Drop],
                 (Some("call"), Some("sessions"), Some("read"), _) => vec![result(Value::Null)],
                 (Some("call"), Some("fixture"), Some("release_target"), _) => vec![
@@ -375,9 +374,13 @@ impl NavigationFixture {
     pub fn fail_next_warm(&self) {
         self.state.lock().unwrap().fail_warm = true;
     }
-    /// The next config read answers as a live call on a machine that isn't answering does: source_changed.
+    /// Config reads answer as a live call on a machine that isn't answering does: source_changed, until allowed.
     pub fn refuse_next_config(&self) {
         self.state.lock().unwrap().refuse_config = true;
+    }
+    /// Config reads answer again: the machine's source is ready.
+    pub fn allow_config(&self) {
+        self.state.lock().unwrap().refuse_config = false;
     }
     pub fn operational(&self) {
         self.state.lock().unwrap().operational = true;

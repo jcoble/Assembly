@@ -252,6 +252,9 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         var cli = new CliRefresh();
                         lock (_gate) _cliRefresh[name] = cli;
                         mirror.CaughtUp += () => RequestCliLocator(name, remote, mirror, capturedProfile!, cli);
+                        // The machines list carries the mirror's readiness: reachable alone comes earlier.
+                        mirror.CaughtUp += () => scoped.Live(name, true);
+                        mirror.LostReadiness += () => { if (!mirror.HasLiveBinding) scoped.Live(name, false); };
                         _active[name] = (remote, mirror, tunnel, scoped, opened.Config with { Name = name }, profile);
                         tunnel = null;
                         _machines.Set(remote);
