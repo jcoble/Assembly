@@ -9,7 +9,7 @@ import { test } from 'node:test';
 function launch(agents: (root: string) => string) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'assembly-stale-agents-')));
   for (const folder of ['scripts', 'desktop', 'dotnet/scripts', 'bin', 'data/mac']) mkdirSync(join(root, folder), { recursive: true });
-  for (const script of ['app-dev.ts', 'app-dev-remote.ts', 'seed-dev.ts']) copyFileSync(new URL(`./${script}`, import.meta.url), join(root, 'scripts', script));
+  for (const script of ['app-dev.ts', 'app-dev-owner.ts', 'app-dev-remote.ts', 'seed-dev.ts']) copyFileSync(new URL(`./${script}`, import.meta.url), join(root, 'scripts', script));
   writeFileSync(join(root, 'scripts/lane-env.sh'), 'DATA="$PWD/data"\nDESKTOP_PORT=18887\nTOKEN_FILE=test\nBOX_PORT=9887\nBOX_TOKEN_FILE=test\n');
   // Stands in for the installer: it records how it was asked, then writes the file.
   writeFileSync(join(root, 'dotnet/scripts/agents-file.sh'), 'printf "%s" "${ASSEMBLY_REPAIR_ONLY:-whole}" > "$ASKED"\nprintf "installed" > "$2"\n');

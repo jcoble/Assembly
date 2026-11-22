@@ -205,3 +205,17 @@ jobs:
             scripts/check-commit-msg.sh --commit "$c" "$BRANCH" || { echo "in $(git log -1 --format='%h %s' "$c")"; failed=1; }
           done
           exit $failed
+      - name: List every TEST-CHANGE line for the reviewer
+        if: ${{ !cancelled() }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo '## TEST-CHANGE lines: each changed or removed test and its reason'
+            echo '```'
+            for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+              git log -1 --format=%B "$c" | grep '^TEST-CHANGE:' | sed "s/^/$(git log -1 --format=%h "$c") /" || true
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

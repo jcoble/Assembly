@@ -12,7 +12,7 @@ test('a second managed dev launch runs no build, install or seed process', { tim
   const home = join(top, 'user'), root = join(home, 'dev/work/worktrees/Assembly/example'), log = join(top, 'calls'), marker = join(top, 'remote-checked');
   const write = (file: string, text: string, mode = 0o600) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text, { mode }); };
   try {
-    for (const file of ['app-dev.ts', 'app-dev-remote.ts', 'update-machines.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
+    for (const file of ['app-dev.ts', 'app-dev-owner.ts', 'app-dev-remote.ts', 'update-machines.ts', 'app-dev-managed.ts', 'seed-dev.ts', 'dev-build-cache.ts', 'dev-toolchain.ts', 'dev-lane-clean.ts', 'dev-remote-identity.ts', 'dev-remote-process.ts']) {
       mkdirSync(join(root, 'scripts'), { recursive: true }); copyFileSync(new URL(file, import.meta.url), join(root, 'scripts', file));
     }
     const owner = { version: 1, name: 'example', number: 2, owner: randomUUID(), host: hostname(), worktree: root };
