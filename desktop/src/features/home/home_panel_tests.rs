@@ -417,4 +417,35 @@ async fn a_stale_advanced_save_refreshes_and_the_retry_saves(cx: &mut TestAppCon
         cx.read(|cx| panel.read(cx).edits["claude/local"].notice.as_deref() == Some("Saved."))
     })
     .await;
+
+    // The saved values are what the inputs now show: the config folder the other editor set is
+    // in its field, not the empty text this editor started from.
+    let config_value = {
+        let panel = panel(cx);
+        cx.read(|cx| {
+            panel.read(cx).edits["claude/local"]
+                .fields
+                .as_ref()
+                .expect("fields are made")[1]
+                .read(cx)
+                .value()
+                .to_string()
+        })
+    };
+    assert_eq!(config_value, "/other-editor-config");
+
+    // A second save in the same panel, editing only the CLI path, keeps that config folder.
+    set_cli(cx, "claude/local", "/changed-again");
+    click(cx, "home-advanced-save-claude-local");
+    until("the second save lands", &mut changes, &changed, || {
+        cx.run_until_parked();
+        server.lock().unwrap().saves.len() == 3
+    })
+    .await;
+    let saves = server.lock().unwrap().saves.clone();
+    assert_eq!(saves[2]["settings"]["binaryPath"], json!("/changed-again"));
+    assert_eq!(
+        saves[2]["settings"]["configHome"],
+        json!("/other-editor-config")
+    );
 }

@@ -272,17 +272,30 @@ impl HomePanel {
         self.calls.push(cx.spawn(async move |this, cx| {
             let outcome = call.await;
             let stale = this
-                .update(cx, |panel, cx| {
+                .update_in(cx, |panel, window, cx| {
                     let edit = panel.edits.entry(key.clone()).or_default();
                     edit.saving = false;
                     let stale = match outcome {
                         Outcome::Ok(reply) => {
                             edit.revision = reply.revision;
-                            // What landed is the new "unchanged" mark for the next save.
+                            // What landed is the new "unchanged" mark for the next save, and
+                            // the inputs show it too: text and mark must never disagree, or a
+                            // later save would send the stale text as a fresh edit.
                             edit.filled = Some([
                                 reply.settings.binary_path.clone(),
                                 reply.settings.config_home.clone(),
                             ]);
+                            if let Some(fields) = edit.fields.clone() {
+                                let values = [
+                                    reply.settings.binary_path.clone().unwrap_or_default(),
+                                    reply.settings.config_home.clone().unwrap_or_default(),
+                                ];
+                                for (field, value) in fields.iter().zip(values) {
+                                    field.update(cx, |field, cx| {
+                                        field.set_value(value, window, cx)
+                                    });
+                                }
+                            }
                             edit.loaded = Some(reply.settings);
                             edit.notice = Some("Saved.".into());
                             false
