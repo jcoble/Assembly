@@ -177,6 +177,6 @@ internal sealed partial class RemoteMachine
         metadata.GetProperty("updatedAt").GetInt64(), metadata.GetProperty("state").GetString()!, OptionalText(metadata, "activeRunId"),
         metadata.GetProperty("pendingAsk").GetBoolean(), metadata.GetProperty("background").GetInt32(), metadata.GetProperty("needsAttention").GetBoolean(),
         metadata.GetProperty("unread").GetBoolean(), OptionalNumber(metadata, "completedAt"), OptionalNumber(metadata, "settledAt"),
-        OptionalText(metadata, "root"), OptionalText(metadata, "titleSource"));
+        OptionalText(metadata, "root"), OptionalText(metadata, "titleSource"), StateSince: OptionalNumber(metadata, "stateSince"));
     private static long? OptionalNumber(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null ? value.GetInt64() : null;
 }

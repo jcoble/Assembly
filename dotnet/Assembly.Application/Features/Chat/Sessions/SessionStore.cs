@@ -424,7 +424,7 @@ public sealed partial class SessionStore
                 // summary can advance EndSeq; the callback preserves that latest value rather than overwriting it.
                 var summary = _summaries is { } current
                     ? SessionSummaries.ProjectRemote(item, current.Get(item.SessionId)) : SessionSummary.None;
-                Publish(scope, session, SessionItem.From(session, summary, Root(scope, session)));
+                Publish(scope, session, SessionItem.From(session, summary, Root(scope, session), summary.State == "waiting" ? item.StateSince : null));
             }
             if (_summaries is { } summaries) scope.AfterCommit(() => summaries.ApplyRemote(item));
             validate?.Invoke(scope);
@@ -434,10 +434,10 @@ public sealed partial class SessionStore
 
     /// <summary>The session's list item: its stored columns and its summary.</summary>
     public SessionItem Item(SessionInfo session) =>
-        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session));
+        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session), _summaries?.WaitingSince(session.SessionId));
 
     public SessionItem Item(IReadScope scope, SessionInfo session) =>
-        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(scope, session));
+        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(scope, session), _summaries?.WaitingSince(session.SessionId));
 
     public string? Root(SessionInfo session) => Location(session)?.Folder;
     public string? Root(IReadScope scope, SessionInfo session) => Location(scope, session)?.Folder;

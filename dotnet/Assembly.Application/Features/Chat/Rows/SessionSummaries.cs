@@ -27,7 +27,7 @@ public sealed class SessionSummaries
 {
     // Each session's rows as far as they decide its summary. Only the start and the hub's lock touch them.
     private readonly Dictionary<string, Tracker> _trackers = [];
-    private ImmutableDictionary<string, SessionSummary> _current = ImmutableDictionary<string, SessionSummary>.Empty;
+    private ImmutableDictionary<string, Entry> _current = ImmutableDictionary<string, Entry>.Empty;
 
     private SessionSummaries()
     {
@@ -42,16 +42,23 @@ public sealed class SessionSummaries
         foreach (var (sessionId, tracker) in summaries._trackers)
             if (tracker.TurnState is not null && !Ends(tracker.TurnState))
                 tracker.EndSeq = store.LastTurnEnd(sessionId);
-        summaries._current = summaries._trackers.ToImmutableDictionary(entry => entry.Key, entry => entry.Value.Summary());
+        summaries._current = summaries._trackers.ToImmutableDictionary(entry => entry.Key, entry => entry.Value.Snapshot());
         return summaries;
     }
 
-    public SessionSummary Get(string sessionId) => Volatile.Read(ref _current).GetValueOrDefault(sessionId) ?? SessionSummary.None;
+    public SessionSummary Get(string sessionId) =>
+        Volatile.Read(ref _current).TryGetValue(sessionId, out var entry) ? entry.Summary : SessionSummary.None;
+
+    /// <summary>When the earliest still-open ask opened (Unix ms), or null when the session is not waiting.</summary>
+    public long? WaitingSince(string sessionId) =>
+        Volatile.Read(ref _current).TryGetValue(sessionId, out var entry) && entry.Summary.State == "waiting"
+            ? entry.WaitingSince
+            : null;
 
     /// <summary>Whether any session has a run open: what holds App Nap.</summary>
-    public bool AnyRunOpen => Volatile.Read(ref _current).Values.Any(summary => summary.RunId is not null);
+    public bool AnyRunOpen => Volatile.Read(ref _current).Values.Any(entry => entry.Summary.RunId is not null);
 
-    /// <summary>Takes in the session's newly saved rows. True if its summary changed. Only under the hub's lock.</summary>
+    /// <summary>Takes in the session's newly saved rows. True if its summary or waiting timestamp changed. Only under the hub's lock.</summary>
     internal bool Apply(string sessionId, IReadOnlyList<StoredRow> rows)
     {
         var counted = false;
@@ -62,20 +69,27 @@ public sealed class SessionSummaries
         }
         if (!counted)
             return false;
-        var summary = _trackers[sessionId].Summary();
-        if (summary == Get(sessionId))
+        var next = _trackers[sessionId].Snapshot();
+        var previous = Volatile.Read(ref _current).TryGetValue(sessionId, out var current)
+            ? current
+            : new Entry(SessionSummary.None, null);
+        if (next == previous)
             return false;
-        ImmutableInterlocked.AddOrUpdate(ref _current, sessionId, summary, (_, _) => summary);
+        ImmutableInterlocked.AddOrUpdate(ref _current, sessionId, next, (_, _) => next);
         return true;
     }
 
     /// <summary>Uses the remote machine's current state even when its rows aren't being followed here.</summary>
     public void ApplyRemote(Sessions.SessionItem item) =>
         ImmutableInterlocked.AddOrUpdate(ref _current, item.SessionId,
-            ProjectRemote(item, Get(item.SessionId)), (_, old) => ProjectRemote(item, old));
+            new Entry(ProjectRemote(item, Get(item.SessionId)), RemoteWaitingSince(item)),
+            (_, old) => new Entry(ProjectRemote(item, old.Summary), RemoteWaitingSince(item)));
 
     internal static SessionSummary ProjectRemote(Sessions.SessionItem item, SessionSummary old) =>
         new(item.ActiveRunId, item.State == "failed" ? "failed" : null, old.EndSeq, item.PendingAsk, item.Background);
+
+    private static long? RemoteWaitingSince(Sessions.SessionItem item) =>
+        item.State == "waiting" ? item.StateSince : null;
 
     // Deltas, messages, tools and the rest never change a summary.
     private static bool Counts(StoredRow row) => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent;
@@ -95,7 +109,9 @@ public sealed class SessionSummaries
                     tracker.EndSeq = row.Seq;
                 break;
             case RowKind.Ask when state == "open":
-                tracker.Asks.Add(row.ItemId ?? "");
+                var askId = row.ItemId ?? "";
+                if (!tracker.Asks.TryGetValue(askId, out var existing) || row.CreatedAt < existing)
+                    tracker.Asks[askId] = row.CreatedAt;
                 break;
             case RowKind.Ask:
                 tracker.Asks.Remove(row.ItemId ?? "");
@@ -116,18 +132,22 @@ public sealed class SessionSummaries
         return tracker;
     }
 
+    private readonly record struct Entry(SessionSummary Summary, long? WaitingSince);
+
     private sealed class Tracker
     {
         public string? RunId { get; set; }
         public string? TurnState { get; set; }
         public long EndSeq { get; set; }
 
-        /// <summary>The open asks, by item.</summary>
-        public HashSet<string> Asks { get; } = [];
+        /// <summary>The open asks, by item, mapped to their earliest open timestamp (Unix ms).</summary>
+        public Dictionary<string, long> Asks { get; } = [];
 
         /// <summary>The tasks and subagents at work, by kind and item.</summary>
         public HashSet<string> Working { get; } = [];
 
         public SessionSummary Summary() => new(RunId, TurnState, EndSeq, Asks.Count > 0, Working.Count);
+
+        public Entry Snapshot() => new(Summary(), Asks.Count > 0 ? Asks.Values.Min() : null);
     }
 }

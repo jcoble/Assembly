@@ -254,6 +254,7 @@ impl SessionPane {
         self.plan_open = false;
         self.header.update(cx, |header, cx| {
             header.show(Some(key.id.clone()), cx);
+            header.set_session_key(Some(key.clone()), cx);
             header.set_parent(parent, cx);
         });
         self.timeline.update(cx, |timeline, cx| {

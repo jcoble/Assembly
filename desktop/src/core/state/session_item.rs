@@ -33,6 +33,9 @@ pub struct SessionItem {
     /// The summary's state: "running", "waiting" (an open ask), "failed" (the last turn) or "idle".
     #[serde(default)]
     pub state: String,
+    /// When the earliest still-open ask opened (Unix ms) while `state` is `"waiting"`.
+    #[serde(default)]
+    pub state_since: Option<i64>,
     /// A turn ended past what a window has shown.
     #[serde(default)]
     pub unread: bool,
