@@ -274,7 +274,7 @@ internal static class Schema
               CASE WHEN $dir='desc' THEN COALESCE(source_route,'') END DESC) AS n
           FROM entries),
         candidates AS (
-          SELECT {RailColumns}, ordering, n FROM ordered o
+          SELECT n FROM ordered o
           WHERE CASE WHEN EXISTS (SELECT 1 FROM ordered WHERE session_id=$anchor AND ($after_ordering IS NULL OR (
               COALESCE(source_machine,'')=COALESCE(json_extract($after_ordering,'$[3]'),'')
               AND COALESCE(source_generation,0)=COALESCE(json_extract($after_ordering,'$[4]'),0)
@@ -299,12 +299,18 @@ internal static class Schema
                   OR ($sort = 'name' AND ((
                     $dir = 'asc' AND (name, session_id, COALESCE(source_machine,''), COALESCE(source_generation,0), COALESCE(source_route,'')) > (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]'), COALESCE(json_extract($after_ordering,'$[3]'),''), COALESCE(json_extract($after_ordering,'$[4]'),0), COALESCE(json_extract($after_ordering,'$[5]'),'')))
                     OR ($dir = 'desc' AND (name, session_id, COALESCE(source_machine,''), COALESCE(source_generation,0), COALESCE(source_route,'')) < (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]'), COALESCE(json_extract($after_ordering,'$[3]'),''), COALESCE(json_extract($after_ordering,'$[4]'),0), COALESCE(json_extract($after_ordering,'$[5]'),''))))))) END
-          ORDER BY n LIMIT $limit),
+          ORDER BY n LIMIT 1),
+        page_start AS (
+          SELECT COALESCE((SELECT n FROM candidates), CASE WHEN $anchor IS NOT NULL THEN 1 END) AS n),
+        page_bounds AS MATERIALIZED (
+          -- Only project headers and sessions spend the page budget. The first unpaid entry also tells us
+          -- whether the page has a successor, even when section headers extend the number of rows returned.
+          SELECT first.n, (SELECT o.n FROM ordered o WHERE o.n>=first.n AND o.header<>0
+            ORDER BY o.n LIMIT 1 OFFSET $limit) AS next_n
+          FROM page_start first),
         page AS (
-          SELECT {RailColumns}, ordering, n FROM ordered
-          WHERE n IN (SELECT n FROM candidates)
-            OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
-          ORDER BY n LIMIT $limit),
+          SELECT {RailColumns}, ordering, o.n FROM ordered o CROSS JOIN page_bounds bounds
+          WHERE o.n>=bounds.n AND (bounds.next_n IS NULL OR o.n<bounds.next_n)),
         engine_sessions AS (
           SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree, e.activity_state, e.state, e.branch
           FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
@@ -358,7 +364,7 @@ internal static class Schema
             AND s.source_machine IS p.source_machine AND s.source_generation IS p.source_generation AND s.source_route IS p.source_route
           LEFT JOIN child_counts child ON child.parent_id=p.session_id AND child.source_machine=p.source_machine
             AND child.source_generation=p.source_generation)
-        SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        SELECT 0, (SELECT next_n IS NOT NULL FROM page_bounds), NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
         UNION ALL
         SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL,

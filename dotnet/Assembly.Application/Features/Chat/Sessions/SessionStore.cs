@@ -317,6 +317,8 @@ public sealed partial class SessionStore
             new SqlArg("$after_group", args.After?.Group), new SqlArg("$after_repo", args.After?.RepoUrl),
             new SqlArg("$after_header", args.After?.Header), new SqlArg("$after_ordering", args.After?.Ordering),
             new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above));
+        // The totals row carries the SQL lookahead; entry positions include the free section headers.
+        var hasMore = parts[0].N != 0;
         // The entries before each page, from its first row's place in the whole list.
         int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
@@ -325,7 +327,7 @@ public sealed partial class SessionStore
             groupBy.Project && !entry.NeedsYou && entry.Header != 0 ? entry.RepoUrl : "",
             entry.Header, entry.Ordering);
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
-            sessions, sessions.Count == args.Limit ? Cursor(sessions[^1]) : null, Start(2));
+            sessions, hasMore ? Cursor(sessions[^1]) : null, Start(2));
     }
 
     // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a session (2).
