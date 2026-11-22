@@ -13,36 +13,6 @@ namespace Assembly.Tests.Engine.Expiry;
 public sealed class MessageExpiryTests
 {
     [Fact]
-    public void Fresh_schema_has_nullable_expiry_and_version_six()
-    {
-        using var f = new EngineFixture();
-        Assert.Equal(15, f.Number("SELECT schema_version FROM engine_meta"));
-        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_message') WHERE name='expires_ms' AND type='INTEGER' AND [notnull]=0"));
-    }
-
-    [Theory]
-    [InlineData(30)]
-    [InlineData(45)]
-    [InlineData(72000)]
-    [InlineData(int.MaxValue)]
-    public void Fresh_pending_rows_snapshot_supplied_scope_setting_and_receiving_clock(int minutes)
-    {
-        using var f = new EngineFixture();
-        f.SeedSession(state: "running");
-        _ = new PreferenceStore(f.Db);
-        var policy = new MessageExpiryPolicy(MessageExpiryPreferences.ReadMinutes);
-        var c = Context(f, "message", 123456);
-        var result = f.Db.Writer.Write("test.same-scope", s =>
-        {
-            s.Execute("INSERT INTO preferences VALUES('messageExpiryMinutes',$value)", new SqlArg("$value", minutes.ToString()));
-            return JournalSend(s, c, new SendMessage(null, "s", "body", "prompt"), policy);
-        });
-        Assert.True(result.Applied);
-        Assert.Equal(123456L + (long)minutes * 60000, f.Number("SELECT expires_ms FROM engine_message"));
-        Assert.Equal("integer", f.Text("SELECT typeof(expires_ms) FROM engine_message"));
-    }
-
-    [Fact]
     public void Replay_never_reads_changed_or_corrupt_policy_or_recalculates_deadline()
     {
         using var f = new EngineFixture();

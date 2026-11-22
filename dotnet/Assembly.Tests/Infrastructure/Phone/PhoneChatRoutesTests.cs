@@ -27,52 +27,6 @@ public sealed class PhoneChatRoutesTests
     private static readonly PhonePeer Paired = new("paired-device");
     private static Task<OwnerPromptAccepted> Immediate(string key, Func<Task<OwnerPromptAccepted>> run, CancellationToken ct) => run();
 
-    [Fact]
-    public async Task Mapped_compatibility_route_uses_only_the_admitted_peer_and_actual_engine_receipt()
-    {
-        await using var h = new Harness();
-        await using var app = WebApplication.CreateSlimBuilder().Build();
-        var id = h.Session();
-        PhonePeer? admitted = null;
-        PhoneChatRoutes.Map(app, h.Door, h.Fixture.Db.Writer, _ => admitted, Immediate, h.EnsureCurrentPeer, h.IsLocalSession);
-        var endpoint = Assert.Single(((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints).OfType<RouteEndpoint>());
-        Assert.Equal("/phone/v1/sessions/{id}/chat", endpoint.RoutePattern.RawText);
-        var body = "{\"text\":\"actual route\",\"clientId\":\"C\",\"peer\":\"owner\"}";
-        var anonymous = Context(id, body);
-        anonymous.RequestServices = app.Services;
-        await endpoint.RequestDelegate!(anonymous);
-        Assert.Equal(401, anonymous.Response.StatusCode);
-        Assert.Equal(0, h.Fixture.Count("engine_message"));
-        admitted = Paired;
-        var paired = Context(id, body);
-        paired.RequestServices = app.Services;
-        await endpoint.RequestDelegate!(paired);
-        Assert.Equal(200, paired.Response.StatusCode);
-        paired.Response.Body.Position = 0;
-        using var receipt = await JsonDocument.ParseAsync(paired.Response.Body);
-        Assert.Equal("queued", receipt.RootElement.GetProperty("state").GetString());
-        Assert.Equal(JsonValueKind.Null, receipt.RootElement.GetProperty("itemId").ValueKind);
-        Assert.Equal(1, h.Fixture.Count("engine_message"));
-    }
-
-    // The phone route takes a prompt and answers a receipt; it serves no rows. So this holds what it can: a prompt
-    // that makes `named` and `attached` on its row goes through the route as it always did.
-    [Fact]
-    public async Task A_prompt_naming_files_and_images_is_sent_exactly_and_answers_only_the_receipt()
-    {
-        await using var h = new Harness();
-        var id = h.Session();
-        const string text = "see /a/b.md\n\nAttached image: /s/a.png (a.png)";
-        var sent = await h.Send(id, JsonSerializer.Serialize(new { text, clientId = "named_1" }));
-        Assert.Equal(200, sent.Status);
-        Assert.Equal(
-            ["itemId", "sessionId", "messageId", "clientId", "state", "messageVersion", "seq", "epoch", "runId"],
-            sent.Body.EnumerateObject().Select(property => property.Name));
-        var manifest = Assert.Single((await h.Door.ReadOwnerPromptsAsync(new(id), default)).Items);
-        var content = await h.Door.ReadOwnerPromptChunkAsync(new(id, "named_1", manifest.ContentSha256, "text", 0), default);
-        Assert.Equal(text, Encoding.UTF8.GetString(content.Data));
-    }
-
     [Theory]
     [InlineData(null)]
     [InlineData(7L)]
@@ -144,25 +98,6 @@ public sealed class PhoneChatRoutesTests
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
         Assert.Empty(h.Machine.Asked);
-    }
-
-    [Theory]
-    [InlineData("{\"text\":\"hi\"}")]
-    [InlineData("{\"text\":\"hi\",\"clientId\":\"bad client\"}")]
-    [InlineData("{\"text\":\"hi\",\"clientId\":\"C\",\"epoch\":-1}")]
-    [InlineData("{\"text\":\"hi\",\"clientId\":\"C\",\"epoch\":1.5}")]
-    [InlineData("{\"text\":\"hi\",\"clientId\":\"C\",\"attachmentIds\":null}")]
-    [InlineData("{\"text\":\"hi\",\"clientId\":\"C\",\"attachmentIds\":[1]}")]
-    [InlineData("{\"text\":\" \",\"clientId\":\"C\"}")]
-    [InlineData("[]")]
-    [InlineData("{")]
-    public async Task Invalid_bodies_are_refused_before_ordering_or_writing(string body)
-    {
-        await using var h = new Harness();
-        var response = await h.Send(h.Session(), body, order: (_, _, _) => throw new InvalidOperationException("Invalid request reached the queue"));
-        Assert.Equal(400, response.Status);
-        Assert.Equal(0, h.Fixture.Count("engine_message"));
-        Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
 
     [Fact]

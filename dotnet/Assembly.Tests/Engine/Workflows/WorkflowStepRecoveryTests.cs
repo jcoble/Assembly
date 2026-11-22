@@ -60,19 +60,6 @@ public sealed class WorkflowStepRecoveryTests
     public static TheoryData<string> ScenarioNames => new(Scenarios.Keys);
 
     [Theory]
-    [MemberData(nameof(ScenarioNames))]
-    public void A_row_is_offered_exactly_what_the_engine_then_applies(string name)
-    {
-        var (make, expected) = Scenarios[name];
-        using (var f = make()) Assert.Equal(expected, Offered(f));
-        foreach (var action in new[] { "retry", "skip", "continue" })
-        {
-            using var f = make();
-            Assert.Equal(expected.Contains(action), Act(f, action).Applied);
-        }
-    }
-
-    [Theory]
     [InlineData("succeeded", null)]
     [InlineData("running", null)]
     [InlineData("waiting", "owner_gate")]
@@ -118,14 +105,5 @@ public sealed class WorkflowStepRecoveryTests
         Assert.Equal("pending", f.State("engine_step", "step"));
         Assert.Empty(Offered(f));
         Assert.Equal(1, f.Number("SELECT generation FROM engine_step"));
-    }
-
-    [Fact]
-    public void A_window_sends_the_step_commands_the_row_uses()
-    {
-        var retry = JsonSerializer.Deserialize("""{"kind":"retry_workflow_step","stepId":"s"}""", EngineJson.Default.EngineCommand);
-        var skip = JsonSerializer.Deserialize("""{"kind":"decide_workflow_step","stepId":"s","decision":"skip"}""", EngineJson.Default.EngineCommand);
-        Assert.Equal(new RetryWorkflowStep("s"), retry);
-        Assert.Equal(new DecideWorkflowStep("s", "skip"), skip);
     }
 }

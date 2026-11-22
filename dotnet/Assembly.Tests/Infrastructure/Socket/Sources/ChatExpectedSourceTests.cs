@@ -7,11 +7,13 @@ using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Sessions.Drafts;
 using Assembly.Domain.Events;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Chat;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Helpers;
 using Assembly.Infrastructure.Engine.Sessions;
 using Assembly.Infrastructure.Remote;
 using Assembly.Tests.Draft.Base.Chat;
@@ -19,7 +21,7 @@ using Assembly.Tests.Infrastructure.Remote;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
-public sealed class ChatExpectedSourceTests
+public sealed partial class ChatExpectedSourceTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
@@ -166,7 +168,7 @@ public sealed class ChatExpectedSourceTests
         Func<IEngineDoor, IEngineDoor>? decorate = null)
     {
         var installed = Build(host, connections, decorate);
-        Register(host, calls, installed); return installed;
+        Register(host, calls, installed, connections); return installed;
     }
     private static Installed Build(TwoHosts.Host host, RemoteConnections? connections = null, Func<IEngineDoor, IEngineDoor>? decorate = null)
     {
@@ -179,9 +181,11 @@ public sealed class ChatExpectedSourceTests
         if (decorate is not null) door = decorate(door);
         return new(machine, door, machines, sources);
     }
-    private static void Register(TwoHosts.Host host, ICallRegistry calls, Installed installed)
+    private static void Register(TwoHosts.Host host, ICallRegistry calls, Installed installed, RemoteConnections? connections = null)
     {
         new SendFeature(host.Sessions, installed.Machines, host.NeedHub, installed.Door).Register(calls);
+        new DraftsFeature(installed.Door).Register(calls);
+        new SessionOpenCalls(host.Fixture.Db, host.Runtime, host.Sessions, installed.Machines, connections).Register(calls);
         new ConfigFeature(host.Sessions, installed.Machines, installed.Door).Register(calls);
         new RowsFeature(host.NeedHub, RowStore.Open(host.Fixture.Db), host.Sessions, installed.Machines, new DiskPathProbe(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), installed.Sources).Register(calls);
     }
@@ -191,7 +195,12 @@ public sealed class ChatExpectedSourceTests
         internal TwoHosts Hosts { get; } = new(windowCalls: true, forwardCommands: true);
         internal Installed Owner = null!, Local = null!;
         internal ExpectedSource Source = null!;
-        internal static async Task<RemoteFixture> Start()
+        /// <param name="recorded">False: the Mac knows the session only through the remote's mirror, as when the
+        /// remote, its phone or another desktop started it.</param>
+        internal EngineHelperCards? HelperCards;
+        /// <param name="helperCards">The desktop's helper-card projection runs in the mirror's and a first open's writes.</param>
+        internal static async Task<RemoteFixture> Start(bool recorded = true, Action<TwoHosts.Host>? seedRemote = null,
+            bool helperCards = false)
         {
             var f = new RemoteFixture(); ICallRegistry? localCalls = null;
             f.Owner = Build(f.Hosts.Remote); f.Hosts.Remote.ChatDoor = f.Owner.Door;
@@ -200,8 +209,13 @@ public sealed class ChatExpectedSourceTests
             f.Hosts.Mac.AdditionalFeatures = calls => localCalls = calls;
             try
             {
-                await f.Hosts.Start(); Seed(f.Hosts.Remote, "selected");
-                f.Hosts.Mac.Sessions.Add("selected", "codex", "source-derived", "workbox-test");
+                await f.Hosts.Start(); Seed(f.Hosts.Remote, "selected"); seedRemote?.Invoke(f.Hosts.Remote);
+                if (recorded) f.Hosts.Mac.Sessions.Add("selected", "codex", "source-derived", "workbox-test");
+                if (helperCards)
+                {
+                    f.HelperCards = new(f.Hosts.Mac.Fixture.Db, TimeProvider.System, TextWriter.Null, f.Hosts.Mac.Sessions);
+                    f.Hosts.Mirrored = f.HelperCards.Mirrored;
+                }
                 await f.Hosts.StartMirror();
                 f.Local = Install(f.Hosts.Mac, localCalls!, f.Hosts.Connections);
                 f.Owner.Machine.Config = new("[]", new Dictionary<string, string> { ["model"] = "OWNER" });
@@ -214,7 +228,11 @@ public sealed class ChatExpectedSourceTests
             }
             catch { await f.DisposeAsync(); throw; }
         }
-        public async ValueTask DisposeAsync() { Owner?.Machine.Release(); await Hosts.DisposeAsync(); }
+        public async ValueTask DisposeAsync()
+        {
+            Owner?.Machine.Release(); await Hosts.DisposeAsync();
+            if (HelperCards is not null) await HelperCards.DisposeAsync();
+        }
     }
 
     // This wrapper delegates real preparation/admission, changing identity only inside the supplied real writer.

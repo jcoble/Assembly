@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Small files (AGENTS.md, Code): fails, naming each one, if a tracked source file (.cs, .ts, .svelte, .rs) is over
-# 600 lines. There's no baseline: a file over it is split. A last line without a newline counts, as in mac-command-bar.
+# Small files (Assembly coding practices, https://app.notion.com/p/41e394b0689d812d8e77da536e185228): fails, naming
+# each one, if a tracked source file (.cs, .ts, .svelte, .rs) is over 600 lines. There's no baseline: a file over it is
+# split. A last line without a newline counts, as in mac-command-bar.
 cd "$(dirname "$0")/../.."
 limit=600
 failed=0

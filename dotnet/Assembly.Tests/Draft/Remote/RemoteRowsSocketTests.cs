@@ -45,7 +45,6 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
     private FakeMachine _remoteMachine = null!;
     private Assembly.Application.Common.Engine.NeedAnswerRequest? _remoteAnswer;
     private MachineStatus _status = null!;
-    private int? _welcomeFormat;
     private readonly TopicSet _localTopics = new();
     private Func<WebSocket, Task>? _bulkRead;
 
@@ -92,16 +91,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        _app.Map("/socket", async context =>
-        {
-            if (_welcomeFormat is not { } format) await _socket.HandleAsync(context);
-            else
-            {
-                using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                await ReadAsync(socket);
-                await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{format}}}""");
-            }
-        });
+        _app.Map("/socket", context => _socket.HandleAsync(context));
         _app.Map("/socket/bulk", async context =>
         {
             if (_bulkRead is null) await _bulk.HandleAsync(context);

@@ -40,6 +40,14 @@ internal sealed partial class RemoteMachine
         ReadConfig(await BoundChatAsync("config", "set", new ConfigFeature.SetArgs(session, config, value,
             target is null ? null : UnwrapTarget(target), LocalSource(live)), live, ct));
 
+    internal async Task SetDraftBoundAsync(string session, Application.Features.Chat.Sessions.Drafts.SessionDraft draft,
+        EngineMirror.LiveMirrorBinding live, CancellationToken ct)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, live.Invalidated, live.OwnerBinding.Invalidated);
+        var args = Application.Features.Chat.Sessions.Drafts.DraftsFeature.Args(session, draft, LocalSource(live));
+        await CallAsync("drafts", "set", args, false, stop.Token, live.Machine, expectedOwner: live.OwnerBinding, expectedMirror: live);
+    }
+
     private async Task<JsonElement> BoundChatAsync(string feature, string method, object args,
         EngineMirror.LiveMirrorBinding live, CancellationToken ct)
     {

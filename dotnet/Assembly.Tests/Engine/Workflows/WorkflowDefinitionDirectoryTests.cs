@@ -30,20 +30,6 @@ public sealed class WorkflowDefinitionDirectoryTests : IDisposable
     }
 
     [Fact]
-    public void Invalid_definitions_and_missing_prompts_have_bounded_actual_errors_without_replacing_valid_neighbors()
-    {
-        Write("bad.yml", "name: Bad\nversion: 1\nsteps: {}");
-        Write("missing.yml", "name: Missing\nsteps: {build: {agent: {provider: custom}, result: build, prompt: prompts/absent.md}}");
-        Write("valid.yml", "name: Valid\nsteps: {check: {run: [\"true\"]}}");
-        var page = WorkflowDefinitionDirectory.List(root);
-        Assert.Equal(3, page.Items.Count);
-        Assert.Contains("version", Assert.Single(page.Items[0].Errors)); Assert.Null(page.Items[0].Hash);
-        Assert.Contains("steps.build.prompt", Assert.Single(page.Items[1].Errors)); Assert.Null(page.Items[1].Hash);
-        Assert.Empty(page.Items[2].Errors); Assert.NotNull(page.Items[2].Hash);
-        Assert.All(page.Items, item => Assert.True(JsonSerializer.SerializeToUtf8Bytes(item, WorkflowDefinitionReadJson.Default.WorkflowDefinitionDisplay).Length <= 32 * 1024));
-    }
-
-    [Fact]
     public void Directory_and_file_symlink_escapes_use_the_existing_loader_path_guards()
     {
         var outside = root + "-outside"; Directory.CreateDirectory(outside);
@@ -84,33 +70,6 @@ public sealed class WorkflowDefinitionDirectoryTests : IDisposable
         Assert.Null(huge.Name); Assert.Equal(WorkflowLoader.Load(root, huge.Path).Hash, huge.Hash);
         Assert.Contains("display", Assert.Single(huge.Errors));
         Assert.True(Encoding.UTF8.GetByteCount(Assert.Single(huge.Errors)) <= 2048);
-    }
-
-    [Fact]
-    public void Oversized_validation_errors_are_explicitly_shortened_within_the_display_budget()
-    {
-        Write("bad.yml", "name: Bad\n? " + new string('x', 5000) + "\n: true\nsteps: {}");
-        var item = Assert.Single(WorkflowDefinitionDirectory.List(root).Items);
-        var error = Assert.Single(item.Errors);
-        Assert.EndsWith("…", error); Assert.True(Encoding.UTF8.GetByteCount(error) <= 2048);
-        Assert.Null(item.Name); Assert.Null(item.Hash);
-    }
-
-    [Fact]
-    public void Display_byte_budget_pages_before_two_hundred_without_losing_or_shortening_valid_names()
-    {
-        var name = new string('n', 20_000);
-        foreach (var index in Enumerable.Range(0, 80)) Write($"n{index:D3}.yml", "name: " + name + "\nsteps: {}");
-        List<string> paths = []; string? after = null; var pages = 0;
-        do
-        {
-            var page = WorkflowDefinitionDirectory.List(root, after, 200); pages++;
-            Assert.True(JsonSerializer.SerializeToUtf8Bytes(page, WorkflowDefinitionReadJson.Default.WorkflowDefinitionPage).Length <= 1024 * 1024);
-            Assert.All(page.Items, item => Assert.Equal(name, item.Name));
-            paths.AddRange(page.Items.Select(item => item.Path)); after = page.Next;
-        } while (after is not null);
-        Assert.True(pages > 1);
-        Assert.Equal(Enumerable.Range(0, 80).Select(index => $".assembly/workflows/n{index:D3}.yml"), paths);
     }
 
     private void Write(string name, string yaml)

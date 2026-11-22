@@ -30,6 +30,10 @@ async fn a_row_with_no_session_reads_through_its_project_and_the_source_it_just_
         if let Some(reply) = hello(frame) {
             return reply;
         }
+        // Record the call before waking the test, so a wait on the calls seen cannot wake too early and then sleep.
+        if frame["t"] == "call" {
+            observed.lock().unwrap().push(frame.clone());
+        }
         let _ = heard.unbounded_send(());
         if frame["t"] == "sub" {
             return vec![Reply::Frame(
@@ -39,7 +43,6 @@ async fn a_row_with_no_session_reads_through_its_project_and_the_source_it_just_
         if frame["t"] != "call" {
             return vec![];
         }
-        observed.lock().unwrap().push(frame.clone());
         let result = match frame["method"].as_str() {
             Some("list") => json!({"projects":[{
                 "id":PROJECT,"machine":"lane","rootPath":"/lane/r","title":"r",
@@ -67,6 +70,13 @@ async fn a_row_with_no_session_reads_through_its_project_and_the_source_it_just_
     });
     let window = cx.add_empty_window();
     let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(None, window, cx)));
+    // The pane changes when an answer reaches the window, after the backend saw the request: wake the waits then too.
+    let woke = changed.clone();
+    let _watching = window.update(|_, cx| {
+        cx.observe(&pane, move |_, _| {
+            let _ = woke.unbounded_send(());
+        })
+    });
     until("the project row", &mut changes, &changed, || {
         window.run_until_parked();
         window.update(|_, cx| {
@@ -114,6 +124,8 @@ struct Fake {
     seen: Arc<Mutex<Vec<Value>>>,
     changes: futures_channel::mpsc::UnboundedReceiver<()>,
     changed: futures_channel::mpsc::UnboundedSender<()>,
+    /// Observers that wake the test's waits when the window changes, kept for as long as the test runs.
+    watching: Vec<gpui::Subscription>,
 }
 
 fn calls(seen: &Arc<Mutex<Vec<Value>>>, method: &str) -> Vec<Value> {
@@ -147,6 +159,10 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
                 json!({"t":"welcome","protocol":1,"machine":"box","engine":"box"}),
             )];
         }
+        // Record the call before waking the test, so a wait on the calls seen cannot wake too early and then sleep.
+        if frame["t"] == "call" {
+            observed.lock().unwrap().push(frame.clone());
+        }
         let _ = heard.unbounded_send(());
         if frame["t"] == "sub" {
             return vec![Reply::Frame(
@@ -156,7 +172,6 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
         if frame["t"] != "call" {
             return vec![];
         }
-        observed.lock().unwrap().push(frame.clone());
         let result = match frame["method"].as_str() {
             Some("list") => json!({"projects":projects.clone(),"next":null}),
             Some("resolve_source") => {
@@ -203,6 +218,7 @@ fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
         seen,
         changes,
         changed,
+        watching: Vec::new(),
     }
 }
 
@@ -221,6 +237,14 @@ async fn pane_following(
 ) -> gpui::Entity<PrPane> {
     let session = session.map(String::from);
     let pane = window.update(|window, cx| cx.new(|cx| PrPane::new(session, window, cx)));
+    // The pane changes when an answer reaches the window, after the backend saw the request: wake the waits then too.
+    let woke = fake.changed.clone();
+    let watching = window.update(|_, cx| {
+        cx.observe(&pane, move |_, _| {
+            let _ = woke.unbounded_send(());
+        })
+    });
+    fake.watching.push(watching);
     until("the project rows", &mut fake.changes, &fake.changed, || {
         window.run_until_parked();
         window.update(|_, cx| {

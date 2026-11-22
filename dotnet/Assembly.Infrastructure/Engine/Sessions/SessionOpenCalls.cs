@@ -45,6 +45,9 @@ internal sealed class SessionOpenCalls(IAppDatabase db, EngineRuntime runtime, S
         call.SourceGuard = guardRemote;
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, guardRemote.Changed);
         captured.EnsureCurrent();
+        // A session this desktop didn't create gets its facade from the live mirror first, so what the open returns
+        // can be read, saved and sent to (helpers, workflow and phone sessions, other desktops' sessions).
+        connections.RecordOpenedFacade(sessions, captured.Machine, captured.Live, captured.EnsureCurrent, target.Session, call.Cancellation);
         // This is the actual owner's local validation, not a display-cache lookup under the saved name.
         JsonElement value;
         try
@@ -70,7 +73,7 @@ internal sealed class SessionOpenCalls(IAppDatabase db, EngineRuntime runtime, S
         }
         else if (resolved.SessionId != target.Session || resolved.ReadOnly != (target.Kind == "historical")) throw Changed();
         guardRemote.EnsureCurrent();
-        return resolved with { Generation = expected.Generation, RouteMachine = expected.RouteMachine, Draft = null };
+        return resolved with { Generation = expected.Generation, RouteMachine = expected.RouteMachine };
     }
 
     private static CallFailed Changed() => new("The selected session source changed.", "source_changed");

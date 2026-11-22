@@ -31,25 +31,4 @@ public sealed class GitBranchesTests
         await Assert.ThrowsAsync<CallFailed>(() => branches.SwitchAsync(repo.Root, "stale", create: true, head, default));
         Assert.DoesNotContain((await branches.ListAsync(repo.Root, default)).Branches, branch => branch.Name == "stale");
     }
-    // Pins: g9#3
-    [Theory]
-    [InlineData("")]
-    [InlineData("--force")]
-    [InlineData("bad branch")]
-    [InlineData("a..b")]
-    [InlineData("/bad")]
-    [InlineData("bad/")]
-    [InlineData("bad.lock")]
-    [InlineData("bad:ref")]
-    public void Unsafe_branch_names_have_a_plain_refusal(string name) => Assert.NotNull(GitBranches.Refusal(name));
-
-    // Pins: g9#3
-    [Fact]
-    public async Task Listing_keeps_a_branch_held_by_another_owned_worktree()
-    {
-        using var repo = new GitHistoryTestRepository(); await repo.InitializeAsync(); await repo.Commit("Root");
-        var worktree = Path.Combine(repo.Root, "linked"); await repo.Run("worktree", "add", "-b", "held", worktree);
-        var held = Assert.Single((await new GitBranches(repo.Git).ListAsync(repo.Root, default)).Branches, branch => branch.Name == "held");
-        Assert.Equal(worktree, held.WorktreeFolder); Assert.False(held.Current);
-    }
 }

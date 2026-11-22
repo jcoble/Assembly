@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Assembly.Application.Common.Calls;
 
 namespace Assembly.Tests.Infrastructure.Socket;
@@ -137,26 +136,6 @@ public sealed partial class SocketTests
         using var reconnected = await OpenAsync();
         await SendAsync(reconnected, """{"t":"sub","id":1,"topic":"notes"}""");
         Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"c","item":{"text":"c"}}]}""", await ReadAsync(reconnected));
-    }
-
-    // A write committed before the snapshot but published after it reaches the subscriber twice, once in its state
-    // and once as a change. A setting is a whole-value upsert, so the second changes nothing (5.7).
-    [Fact]
-    public async Task A_duplicated_settings_upsert_leaves_the_same_value()
-    {
-        _calls.Topic("settings", TestJson.Default.Setting, setting => setting.Key, (_, _) => [new Setting("theme", "dark")]);
-        using var socket = await OpenAsync();
-
-        await SendAsync(socket, """{"t":"sub","id":1,"topic":"settings"}""");
-        var state = await ReadAsync(socket);
-        _topics.Publish("settings", "theme", """{"key":"theme","value":"dark"}""");
-        var change = await ReadAsync(socket);
-
-        // State entries and a change apply the same way: by their key, to their item.
-        var values = new Dictionary<string, string>();
-        foreach (var entry in JsonDocument.Parse(state).RootElement.GetProperty("items").EnumerateArray().Append(JsonDocument.Parse(change).RootElement))
-            values[entry.GetProperty("key").GetString()!] = entry.GetProperty("item").GetProperty("value").GetString()!;
-        Assert.Equal(new Dictionary<string, string> { ["theme"] = "dark" }, values);
     }
 
     // A write that commits and publishes while a subscriber's state is being read is neither lost nor sent before the

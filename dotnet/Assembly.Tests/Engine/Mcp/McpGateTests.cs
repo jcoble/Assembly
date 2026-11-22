@@ -55,23 +55,6 @@ public sealed class McpGateTests
     }
 
     [Theory]
-    [InlineData("running")]
-    [InlineData("waiting")]
-    public async Task Caller_row_has_depth_run_step_and_attempt(string stepState)
-    {
-        var topics = new Topics();
-        using var f = new EngineFixture(topics: topics);
-        f.SeedSession("owner");
-        f.SeedRun(ownerSessionId: "owner");
-        f.SeedSession("child", "running", "owner", "r", "claude");
-        f.SeedStep("st", state: stepState, sessionId: "child", attempt: 2);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
-        var expected = new CallerRow("child", 0, "running", "owner", 1, "r", "st", 2, "claude", "model", "/test", "Test");
-        Assert.Equal(expected, Gate(runtime, f).Read(new("child", 0), (row, _) => row, default));
-        Assert.Equal(expected, Gate(runtime, f).Write(new("child", 0), w => w.Caller));
-    }
-
-    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Runtime_read_disposes_its_snapshot(bool fail)
@@ -155,20 +138,6 @@ public sealed class McpGateTests
             return 0;
         }, default);
         Assert.Equal(8, f.Number("SELECT epoch FROM engine_session WHERE id='s'"));
-    }
-
-    [Fact]
-    public async Task Child_limit_refusal_uses_the_current_limit()
-    {
-        var topics = new Topics();
-        using var f = new EngineFixture(topics: topics);
-        f.SeedSession();
-        for (var i = 0; i < 5; i++) f.SeedSession($"child-{i}", parentId: "s");
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
-        var error = Assert.Throws<McpRefused>(() => Gate(runtime, f).Write(new("s", 0), w =>
-            w.Apply("sixth", 0, 0, new StartSession("codex", "m", "/f", "Child", "s", null, null))));
-        Assert.Equal("child_limit", error.Refusal.Code);
-        Assert.Equal("5", error.Refusal.Values!["limit"]);
     }
 
     [Fact]

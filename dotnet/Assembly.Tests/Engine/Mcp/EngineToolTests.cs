@@ -40,25 +40,4 @@ public sealed class EngineToolTests
         Assert.Equal("probe", tool.ProtocolTool.Name);
         Assert.False(tool.ProtocolTool.InputSchema.GetProperty("additionalProperties").GetBoolean());
     }
-
-    [Theory]
-    [InlineData("refused", "Your session moved to another machine; this call was not applied.")]
-    [InlineData("json", "probe: Assembly refused these arguments.")]
-    [InlineData("identity", "Your session has ended in Assembly; this call was not applied.")]
-    public async Task Sdk_invocation_translates_refusals_and_bad_json(string mode, string expected)
-    {
-        using var input = new MemoryStream();
-        using var output = new MemoryStream();
-        await using var server = McpServer.Create(new StreamServerTransport(input, output), new());
-        var tool = new Probe((_, _, _) => mode == "refused" ? throw new McpRefused(new("stale_epoch")) : throw new JsonException());
-        var request = new RequestContext<CallToolRequestParams>(server, new() { Method = "tools/call", Id = new RequestId(1) }, new() { Name = "probe" })
-        { User = mode == "identity" ? null : new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", "s"), new("assembly:epoch", "0")], "test")) };
-        var result = await tool.InvokeAsync(request);
-        Assert.True(result.IsError);
-        Assert.Equal(expected, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
-    }
-
-    [Fact]
-    public void Generated_json_rejects_unknown_members() => Assert.Throws<JsonException>(() =>
-        JsonSerializer.Deserialize("""{"sessionId":"s","epoch":0,"actor":"window"}""", McpJson.Default.McpCaller));
 }

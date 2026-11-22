@@ -14,6 +14,9 @@ namespace Assembly.Tests.Engine;
 
 internal sealed class EngineFixture : IDisposable
 {
+    /// <summary>The engine schema version a current database holds. Tests that check it read this, so a migration edits one place.</summary>
+    internal const int CurrentSchemaVersion = 15;
+
     private readonly TempDatabase _file = new();
     private readonly ITopics _topics;
     public AppDatabase Db { get; private set; }

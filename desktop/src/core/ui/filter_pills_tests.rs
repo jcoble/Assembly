@@ -1,4 +1,4 @@
-//! Tests for the quick filter pills' picks (docs/behavior/sessions-list.md, sessions-list#7).
+//! Tests for the quick filter pills' picks (Sessions list: behavior list, https://app.notion.com/p/409394b0689d81c193b7ee1f927ccd37, sessions-list#7).
 
 use super::filter_pills::{FilterGroup, FilterOption, Pills};
 

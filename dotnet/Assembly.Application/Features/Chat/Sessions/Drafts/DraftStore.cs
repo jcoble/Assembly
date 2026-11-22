@@ -4,7 +4,7 @@ using Assembly.Application.Common.Database;
 
 namespace Assembly.Application.Features.Chat.Sessions.Drafts;
 
-/// <summary>A local session's unsent composer draft: its text and the images already saved for it.</summary>
+/// <summary>A session's unsent composer draft: its text and the images already saved for it.</summary>
 public sealed record SessionDraft(string Text, IReadOnlyList<DraftAttachment> Attachments)
 {
     public static readonly SessionDraft Empty = new("", []);

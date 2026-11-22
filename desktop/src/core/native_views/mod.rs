@@ -2,7 +2,7 @@
 //! everything GPUI draws, so a menu, the palette, a dialog or another tab can't cover them. This module is the only
 //! code that makes, shows, hides, places or releases one; the guard (desktop/scripts/guard.sh) fails on a native
 //! view API anywhere else. The terminal and browser lanes add their surfaces in this folder, and their features hold
-//! only a `NativeViewId`. The rules are g0-host#5 to g0-host#10 in docs/behavior/g0-host.md.
+//! only a `NativeViewId`. The rules are g0-host#5 to g0-host#10 in the G0 host: behavior list (https://app.notion.com/p/409394b0689d81aebe92fabeebe583fd).
 
 mod native_surface;
 pub mod native_view_id;

@@ -13,7 +13,7 @@ const [command, ...args] = process.argv.slice(2);
 appendFileSync(process.env.PACKAGER_LOG, [command, ...args].join(' ') + '\\n');
 if (command === 'resolve') console.log(process.env.RESOLVE_FAIL ? '' : '${versions}');
 if (process.env.RESOLVE_FAIL) process.exit(5);
-if (command === 'build') {
+if (command === 'build-local') {
   if (process.env.BUILD_FAIL) process.exit(6);
   mkdirSync(args[2], { recursive: true });
 }
@@ -26,6 +26,7 @@ function checkout(installer: string, extra: NodeJS.ProcessEnv = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'assembly-local-adapters-')));
   for (const folder of ['scripts', 'desktop', 'dotnet/scripts', 'bin']) mkdirSync(join(root, folder), { recursive: true });
   copyFileSync(new URL('./app-dev.ts', import.meta.url), join(root, 'scripts/app-dev.ts'));
+    copyFileSync(new URL('./app-dev-owner.ts', import.meta.url), join(root, 'scripts/app-dev-owner.ts'));
   copyFileSync(new URL('./app-dev-remote.ts', import.meta.url), join(root, 'scripts/app-dev-remote.ts'));
   copyFileSync(new URL('./seed-dev.ts', import.meta.url), join(root, 'scripts/seed-dev.ts'));
   writeFileSync(join(root, 'scripts/package-adapters.ts'), packager);
@@ -50,7 +51,7 @@ test('agents with no usable release are built here, installed, and the app opens
     const assets = join(root, 'desktop/target/local-adapters');
     assert.deepEqual(readFileSync(packager, 'utf8').trim().split('\n'), [
       'resolve',
-      `build ${process.platform}-${process.arch} ${versions} ${assets}`,
+      `build-local ${process.platform}-${process.arch} ${versions} ${assets}`,
     ]);
     assert.equal(readFileSync(local, 'utf8'), assets);
     assert.equal(readFileSync(join(root, 'data/mac/agents.json'), 'utf8'), '[]');

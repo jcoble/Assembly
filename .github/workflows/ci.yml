@@ -49,7 +49,29 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet build -warnaserror
-      - run: dotnet test --no-build
+      # The trx file holds every test's duration (the console log prints none for a passing test). The slowest 40 go to
+      # the job summary and the whole file is kept as an artifact, to decide which tests to cut or speed up.
+      - run: dotnet test --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
+      - name: Slowest tests
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### 40 slowest .NET tests"
+            echo
+            echo "| Seconds | Test |"
+            echo "| ---: | --- |"
+            grep -h '<UnitTestResult ' TestResults/*.trx \
+              | sed -nE 's/.* testName="([^"]*)".* duration="([0-9:.]+)".*/\2 \1/p' \
+              | awk '{ split($1, t, ":"); s = t[1] * 3600 + t[2] * 60 + t[3]; $1 = ""; sub(/^ /, ""); printf "%.3f\t%s\n", s, $0 }' \
+              | sort -t"$(printf '\t')" -k1,1nr \
+              | awk -F'\t' 'NR <= 40 { gsub(/\|/, "\\|", $2); print "| " $1 " | `" $2 "` |" }'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: dotnet-test-results
+          path: dotnet/TestResults/*.trx
+          retention-days: 14
   desktop:
     # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
     # runs in lint.
@@ -143,17 +165,23 @@ jobs:
           dotnet build dotnet/Assembly.Remote/Assembly.Remote.csproj
           bash scripts/remote-cli.test.sh
   lint:
-    # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet.
+    # scripts/lint.sh runs the retained script checks and native desktop guard; its .NET checks need dotnet. On a pull
+    # request dotnet format checks only the projects changed against the base (scripts/lint.d/50-dotnet-format.sh);
+    # every push to main and manual run checks the whole solution.
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
       - run: bash scripts/lint.sh
+        env:
+          LINT_BASE: ${{ github.event.pull_request.base.sha }}
   commits:
     # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
     if: github.event_name == 'pull_request'
@@ -177,3 +205,17 @@ jobs:
             scripts/check-commit-msg.sh --commit "$c" "$BRANCH" || { echo "in $(git log -1 --format='%h %s' "$c")"; failed=1; }
           done
           exit $failed
+      - name: List every TEST-CHANGE line for the reviewer
+        if: ${{ !cancelled() }}
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo '## TEST-CHANGE lines: each changed or removed test and its reason'
+            echo '```'
+            for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+              git log -1 --format=%B "$c" | grep '^TEST-CHANGE:' | sed "s/^/$(git log -1 --format=%h "$c") /" || true
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

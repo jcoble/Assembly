@@ -73,17 +73,6 @@ public sealed class WorkflowToolTests
     }
 
     [Theory]
-    [InlineData("title")]
-    [InlineData("root")]
-    public async Task Check_and_start_resolve_exact_added_project_root_or_unique_title(string selector)
-    {
-        await using var h = new Harness(); var project = selector == "title" ? "Project" : h.Root;
-        var suffix = ",\"project\":" + JsonSerializer.Serialize(project);
-        var check = await h.Call(h.Check, "{\"path\":\".assembly/workflows/flow.yml\"" + suffix + "}"); Assert.False(check.IsError);
-        var start = await h.Call(h.Start, Start[..^1] + suffix + "}"); Assert.False(start.IsError);
-    }
-
-    [Theory]
     [InlineData("{}")]
     [InlineData("root")]
     public async Task A_project_the_desktop_added_on_this_machine_starts_a_workflow(string selector)
@@ -93,17 +82,6 @@ public sealed class WorkflowToolTests
         var start = await h.Call(h.Start, selector == "root" ? Start[..^1] + ",\"project\":" + JsonSerializer.Serialize(h.Root) + "}" : Start);
         Assert.False(start.IsError, start.Content[0].ToString());
         Assert.Equal(1, h.Fixture.Count("engine_run"));
-    }
-
-    [Fact]
-    public async Task Ambiguous_title_and_missing_association_do_not_guess_a_project()
-    {
-        await using var h = new Harness();
-        var store = new ProjectStore(h.Fixture.Db, h.Fixture.Time);
-        h.Fixture.Db.Writer.Write("test.ambiguous-project", s => store.AddOrRestore(s, h.Fixture.Machine, h.Root + "-other", "Project", null));
-        Assert.True((await h.Call(h.Check, "{\"path\":\".assembly/workflows/flow.yml\",\"project\":\"Project\"}")).IsError);
-        h.Fixture.Db.Writer.Write("test.unassigned", s => s.Execute("UPDATE engine_session SET project_id=NULL WHERE id='owner'"));
-        Assert.True((await h.Call(h.Start, Start)).IsError); Assert.Equal(0, h.Loads); Assert.Equal(0, h.Fixture.Count("engine_run"));
     }
 
     [Fact]

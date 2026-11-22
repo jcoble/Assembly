@@ -9,7 +9,7 @@ import { command, lifetime } from './dev-remote-process.ts';
 import { probeSource, type Probe } from './dev-remote-probe.ts';
 import { ensureTools, keepNewer, latestTools, toolKey } from './dev-toolchain.ts';
 import { waitForIdle } from './dev-remote-idle.ts';
-import { HostDown, HostUnseen, waitForAnswer } from './dev-remote-ready.ts';
+import { HostDown, HostUnseen, startStoppedHost, waitForAnswer } from './dev-remote-ready.ts';
 import { stage } from './dev-remote-timing.ts';
 
 const owner = lifetime(true);
@@ -52,7 +52,11 @@ try {
   }
   if (request.managed && JSON.stringify(JSON.parse(await fs.readFile(join(root, 'lane-owner.json'), 'utf8'))) !== JSON.stringify(request.managed.owner))
     throw Error('managed lane reservation belongs to another checkout; no update performed');
-  const before = await probe();
+  let before = await probe();
+  if (before.stopped) {
+    console.log(`Workbox Test ${target.unit} is installed but stopped; starting it`);
+    before = await startStoppedHost({ unit: target.unit, run, answer: () => probe(), signal: owner.signal });
+  }
   const identity = await backendIdentity(process.cwd(), request.commit, owner.signal);
   if (identity !== request.identity) throw Error('source identity differs after transfer');
   let desiredTools = request.managed ? toolKey(keepNewer(request.managed.versions, before.toolVersions), request.sources, 'linux-x64') : undefined;
@@ -125,7 +129,7 @@ TimeoutStopSec=30
       restartTime();
       const answerTime = stage('answer');
       const after = await waitForAnswer({ pid, state: hostState, answer: () => probe(), signal: owner.signal });
-      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && after.engine !== before.engine) || after.dll !== dll || request.managed && after.toolsKey !== desiredTools) throw Error('new host identity could not be verified; inspect lane host before retrying');
+      if (after.backendIdentity !== prepared.identity || after.commit !== prepared.commit || (!before.missing && !before.stale && after.engine !== before.engine) || after.dll !== dll || request.managed && after.toolsKey !== desiredTools) throw Error('new host identity could not be verified; inspect lane host before retrying');
       answerTime();
       // Disk only: a failed cleanup never fails a host that is already verified.
       await pruneReleases(root, [destination, ...(previous ? [previous.directory] : [])])

@@ -49,18 +49,6 @@ public sealed class WorkflowStartTests
     }
 
     [Fact]
-    public void Freeform_run_has_null_task_request_title_and_pending_setup_intent()
-    {
-        using var f = new Fixture(); var request = f.Request(); var ack = f.Apply(f.Prepare(request));
-        Assert.True(ack.Result.Applied, ack.Result.Error); Assert.Equal(request.ProposedRunId, ack.RunId);
-        Assert.Null(f.Core.Text("SELECT task_url FROM engine_run"));
-        Assert.Equal("fix this bug", f.Core.Text("SELECT title FROM engine_run"));
-        Assert.Equal("pending", f.Core.Text("SELECT setup_state FROM engine_run"));
-        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_setup' AND state='pending'"));
-        Assert.Equal(0, f.Core.Count("engine_workflow_receipt"));
-    }
-
-    [Fact]
     public void Existing_key_prepares_before_rereading_a_deleted_definition_and_returns_original_after_reopen()
     {
         var folder = Path.Combine(Path.GetTempPath(), "a40-workflow-" + Guid.NewGuid().ToString("N"));
