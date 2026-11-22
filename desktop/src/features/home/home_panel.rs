@@ -168,7 +168,7 @@ impl HomePanel {
             .min_w_0()
             .text_role(TextRole::Title, cx)
             .text_color(color);
-        if summary.restart_version.is_some() || summary.kind == "restart_to_finish" {
+        if summary.restart_version.is_some() {
             let restarting = self.restarting
                 || state.machines.iter().any(|machine| {
                     machine.key == "local" && machine.update_state.as_deref() == Some("restarting")

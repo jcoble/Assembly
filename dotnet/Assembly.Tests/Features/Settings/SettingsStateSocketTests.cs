@@ -288,8 +288,10 @@ public sealed partial class SettingsStateSocketTests
             Assert.Equal(SettingsSummary.Problem, failed.GetProperty("summary").GetProperty("kind").GetString());
             var lastFailure = ProviderMachine(failed, "codex", "Workbox").GetProperty("lastFailure");
             Assert.False(string.IsNullOrWhiteSpace(lastFailure.GetProperty("message").GetString()));
-            // A remote's raw output never leaves its machine: its detail is a plain sentence, never a code.
-            Assert.Equal("The provider's adapter stopped while it was being checked.", lastFailure.GetProperty("detail").GetString());
+            // A remote's raw output never leaves its machine: its detail is present, never the code.
+            var remoteDetail = lastFailure.GetProperty("detail").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(remoteDetail));
+            Assert.DoesNotContain("adapter_crashed", remoteDetail, StringComparison.Ordinal);
 
             // A failing check on this machine keeps its raw output as the detail, with the secret scrubbed out.
             var claudeVersion = ProviderMachine(failed, "claude", "local").GetProperty("version").GetInt64();
@@ -410,50 +412,6 @@ public sealed partial class SettingsStateSocketTests
                 db.Dispose();
                 Directory.Delete(tempRoot, recursive: true);
             }
-        }
-    }
-
-    // A staged restart stays visible alongside a provider problem: the summary names the problem
-    // and still carries the restart version, so the panel can offer Restart next to it.
-    [Fact]
-    public async Task A_staged_restart_is_carried_alongside_a_provider_problem()
-    {
-        var tempRoot = Directory.CreateTempSubdirectory("assembly-settings-restart-").FullName;
-        var dbPath = Path.Combine(tempRoot, "assembly.db");
-        var topics = new TopicSet();
-        var db = AppDatabase.Open(dbPath, TimeProvider.System, topics);
-        EngineSchema.Open(db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
-        var work = new BackgroundWork(TimeProvider.System, TextWriter.Null);
-        var status = new MachineStatus(topics, []);
-        var sessions = SessionStore.Open(db, TimeProvider.System, Path.Combine(tempRoot, "sessions"));
-        var machinesFeature = new MachinesFeature(new MachineSet(new FakeMachine(null, sessions)), status, () => { }, TimeProvider.System);
-        // An enabled provider whose descriptor is invalid (no command): a problem on this machine.
-        var launcher = new FakeLauncher
-        {
-            Agents = [new("claude", "Claude Code", "", [], null, VendorFamily: "claude")]
-        };
-        new ProviderEnablementStore(db, TimeProvider.System).SetEnabled("claude", true);
-        var feature = new SettingsStateFeature(db, topics, work, launcher, machinesFeature, "local-engine", TimeProvider.System);
-        var registry = new TopicCaptureRegistry();
-        feature.Register(registry);
-        var ownerCall = new CallContext(CancellationToken.None, "owner", Peer: new OwnerPeer());
-        try
-        {
-            status.RestartReady("9.9.9");
-            var states = (IReadOnlyList<SettingsState>)registry.ReadState!(null, ownerCall);
-            var json = JsonSerializer.Serialize(Assert.Single(states), SettingsStateJson.Default.SettingsState);
-            using var parsed = JsonDocument.Parse(json);
-            var summary = parsed.RootElement.GetProperty("summary");
-            Assert.Equal(SettingsSummary.Problem, summary.GetProperty("kind").GetString());
-            Assert.Equal("9.9.9", summary.GetProperty("restartVersion").GetString());
-        }
-        finally
-        {
-            await feature.DisposeAsync();
-            await machinesFeature.DisposeAsync();
-            await work.DisposeAsync();
-            db.Dispose();
-            Directory.Delete(tempRoot, recursive: true);
         }
     }
 

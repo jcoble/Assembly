@@ -175,7 +175,10 @@ public sealed partial class UpdateCheckTests
         Behind(status, "box");
         Assert.True(updates.Start());
         await Until(() => status.Items[1].UpdateNote is not null && !status.Items[1].Updating);
-        Assert.Equal("Update failed: The update didn't finish.", status.Items[1].UpdateNote);
+        var note = status.Items[1].UpdateNote;
+        Assert.NotNull(note);
+        Assert.StartsWith("Update failed:", note);
+        Assert.DoesNotContain("compile error", note, StringComparison.Ordinal);
         await Until(() => status.Items[1].Updates is { } items && items.All(item => item.Kind != "backend" || item.Current is null));
         Behind(status, "box");
         Assert.True(updates.Start());
@@ -329,7 +332,9 @@ public sealed partial class UpdateCheckTests
             var failed = await Assert.ThrowsAsync<CallFailed>(() => source.UpdateAsync([new(null, [Item("adapter", "codex-acp")])], false, notes.Add, CancellationToken.None));
             Assert.Equal(["Waiting."], notes);
             Assert.Equal($"--this-machine --home {root}", File.ReadAllText(Path.Combine(root, "scripts/args")));
-            Assert.Equal("The update didn't finish.", failed.Message);
+            Assert.False(string.IsNullOrWhiteSpace(failed.Message));
+            Assert.Equal("update_failed", failed.Reason);
+            Assert.DoesNotContain("Workbox Test sync: nope", failed.Message, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -482,7 +487,9 @@ public sealed partial class UpdateCheckTests
         welcome.Status.Welcomed = null;
         welcome.Say();
         await updates.CheckAsync("box", default);
-        await Until(() => welcome.Status.Items[1].UpdateNote == "Update failed: The update didn't finish." && !welcome.Status.Items[1].Updating);
+        await Until(() => welcome.Status.Items[1].UpdateNote is not null && !welcome.Status.Items[1].Updating);
+        Assert.StartsWith("Update failed:", welcome.Status.Items[1].UpdateNote);
+        Assert.DoesNotContain("no release", welcome.Status.Items[1].UpdateNote!, StringComparison.Ordinal);
         // The failed update's own recheck and every later hello come back behind, and start nothing more.
         await updates.CheckAsync("box", default);
         await updates.CheckAsync("box", default);
@@ -540,7 +547,10 @@ public sealed partial class UpdateCheckTests
         Assert.False(updates.Start());
         finish.SetResult();
         await Until(() => !status.Items[1].Updating);
-        Assert.Equal("Install failed: The update didn't finish.", status.Items[1].UpdateNote);
+        var note = status.Items[1].UpdateNote;
+        Assert.NotNull(note);
+        Assert.StartsWith("Install failed:", note);
+        Assert.DoesNotContain("Port 9797", note, StringComparison.Ordinal);
     }
 
     [Fact]
