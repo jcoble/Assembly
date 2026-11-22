@@ -1,42 +1,48 @@
-//! `UtilityStrip` owns the bar at the foot of the sessions column, under a divider: Settings, then Resources and
-//! Usage as pills, each opening the kit's popover anchored to it and opening upward, which the kit keeps on screen.
+//! `UtilityStrip` owns the bar at the foot of the sessions column, the look's 46-high footer: Settings, Resources
+//! and Usage as quiet buttons, each opening the kit's popover anchored to it and opening upward, which the kit keeps on screen.
 //! Settings opens the Settings page through the `OpenSettings` intent; the other two bodies wait for the resources and
 //! usage quota feeds; nothing here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage and resource popovers in ShellOverlays.svelte.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
+use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::*;
 
 use crate::core::intents::open_settings::OpenSettings;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_PILL, CRUMB_HEIGHT, SPACE};
 use crate::core::ui::access::control_ids::utility as ids;
 use crate::core::ui::access::{Control as _, say};
+
+/// A button's icon.
+const ICON_SIZE: Pixels = px(16.);
 
 pub struct UtilityStrip;
 
 impl Render for UtilityStrip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let pill = theme.radius_full();
-        // The mock's foot: a 22 px settings button with 6 px corners, then its figures.
-        let settings = Button::new("Settings")
+        let look = Look::of(cx);
+        // The mock's `.foot`: three quiet buttons, each an icon and its word in text-2.
+        let button = |id: &'static str, icon: IconName| {
+            Button::new(id)
+                .ghost()
+                .h(BUTTON_HEIGHT)
+                .px(SPACE[4])
+                .rounded(CORNER_PILL)
+                .text_color(look.text_2)
+                .icon(Icon::new(icon).size(ICON_SIZE))
+                .label(id)
+        };
+        let settings = button("Settings", IconName::Settings)
             .control(ids::SETTINGS, "Settings")
-            .ghost()
-            .with_size(px(17.))
-            .size(px(22.))
-            .rounded(px(6.))
-            .icon(IconName::Settings)
             .tooltip("Settings")
             .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
         h_flex()
-            .h(px(40.))
+            .h(CRUMB_HEIGHT)
             .flex_none()
-            .px(px(12.))
-            .gap(px(10.))
-            .border_t_1()
-            .border_color(theme.table_row_border)
-            .text_color(theme.muted_foreground)
+            .px(SPACE[2])
+            .gap(SPACE[0])
             .child(
                 div()
                     .debug_selector(|| "settings-button".into())
@@ -44,22 +50,12 @@ impl Render for UtilityStrip {
             )
             .child(figure(
                 "resources",
-                Button::new("Resources")
-                    .control(ids::RESOURCES, "Resources")
-                    .ghost()
-                    .compact()
-                    .rounded(pill)
-                    .label("Resources"),
+                button("Resources", IconName::Activity).control(ids::RESOURCES, "Resources"),
                 (ids::RESOURCES_EMPTY, "No resource figures yet."),
             ))
             .child(figure(
                 "usage",
-                Button::new("Usage")
-                    .control(ids::USAGE, "Usage")
-                    .ghost()
-                    .compact()
-                    .rounded(pill)
-                    .label("Usage"),
+                button("Usage", IconName::ChartNoAxesColumn).control(ids::USAGE, "Usage"),
                 (ids::USAGE_EMPTY, "No usage figures yet."),
             ))
     }

@@ -10,6 +10,8 @@ gpui_kit::assets::icon_assets!(
     Extra,
     [
         House,
+        Activity,
+        ChartNoAxesColumn,
         FolderSearch,
         Cloud,
         FileSymlink,

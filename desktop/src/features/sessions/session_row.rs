@@ -1,14 +1,15 @@
-//! `SessionRow` is one session in the rail, on the shared three-line row: its title (after its provider's mark, both
-//! tinted while it runs) with how long it has run or its age, and an arrow when the row has something to open; icons
-//! for its state and machine, then the remote machine's name and branch, all spelled out in a tooltip; and its newest
-//! text, one line, or its project before it has any. The right-click menu moves it between Working and Done or
+//! `SessionRow` is one session in the rail, on the shared three-line row, as the look's session row: its state's
+//! glyph (a shape as well as a colour), then its title with how long it has run or its age, and an arrow when the row
+//! has something to open; its provider's glyph and its machine, then the remote machine's name and branch, all
+//! spelled out in a tooltip; and its newest text, one line, or its project before it has any. A row that needs you
+//! is outlined in amber; the selected row gets the selected fill and line. The right-click menu moves it between Working and Done or
 //! settles it (`sessions/mark`), and copies its link, saying what that link does while the pointer rests on it.
 
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::Icon;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
 use gpui_kit::*;
 
 use super::history::age::{age, elapsed_text};
@@ -16,8 +17,14 @@ use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
 use crate::core::navigation::external_urls::session_link;
+use crate::core::theme::look::Look;
 use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
 use crate::hinted_item::HintedItem;
+
+/// The state glyph, the provider's glyph and the machine's icon (the mockup's `.st`, the sheet's 14 and `.l2 .i`).
+const GLYPH: Pixels = px(16.);
+const PROVIDER_GLYPH: Pixels = px(14.);
+const MACHINE_GLYPH: Pixels = px(13.);
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
@@ -78,32 +85,35 @@ pub fn short_details(entry: &RailEntry) -> String {
     parts.join(" · ")
 }
 
-/// The icon for a state, where it has one: working is the row's tint, and idle shows nothing.
+/// The icon for a state that has its own: working and idle take the ring and the empty circle (`glyph`).
 pub fn state_icon(presence: Presence) -> Option<IconName> {
     match presence {
-        Presence::NeedsYou => Some(IconName::BellDot),
-        Presence::Failed => Some(IconName::CircleX),
+        Presence::NeedsYou => Some(IconName::CircleQuestionMark),
+        Presence::Failed => Some(IconName::TriangleAlert),
         Presence::Done => Some(IconName::CircleCheck),
         Presence::Working | Presence::Unread | Presence::Idle => None,
     }
 }
 
-/// The colour of a state's word.
-fn tint(presence: Presence, cx: &App) -> Hsla {
-    let theme = cx.theme();
-    match presence {
-        Presence::NeedsYou => theme.warning,
-        Presence::Working => theme.info,
-        Presence::Failed => theme.danger,
-        Presence::Done => theme.success,
-        Presence::Unread | Presence::Idle => theme.muted_foreground,
-    }
+/// The row's lead glyph and its colour: the state's icon, the still working ring while it runs (it never spins),
+/// and the empty circle when nothing is going on.
+fn glyph(presence: Presence, look: &Look) -> (IconName, Hsla) {
+    let icon = state_icon(presence).unwrap_or(match presence {
+        Presence::Working => IconName::LoaderCircle,
+        _ => IconName::Circle,
+    });
+    let colour = match presence {
+        Presence::NeedsYou => look.needs_you,
+        Presence::Working => look.accent,
+        Presence::Failed => look.problem,
+        Presence::Done | Presence::Unread | Presence::Idle => look.idle,
+    };
+    (icon, colour)
 }
 
 impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, accent, info) = (theme.muted_foreground, theme.caret, theme.info);
+        let look = Look::of(cx);
         let entry = self.entry;
         let title = match entry.title.as_deref().map(str::trim) {
             Some(title) if !title.is_empty() => title.to_string(),
@@ -123,20 +133,16 @@ impl RenderOnce for SessionRow {
         let id = entry.session_id.clone();
         let route = entry.machine.clone();
         // No spinner: its frames redraw the window for as long as a session runs, about 33% of a core in a debug build.
-        let mark = Icon::empty()
-            .path(entry.icon.clone())
-            .small()
-            .text_color(if running { info } else { muted })
+        let (icon, colour) = glyph(presence, &look);
+        let lead = Icon::new(icon)
+            .size(GLYPH)
+            .text_color(colour)
             .into_any_element();
         let time = now.map(|now| match running {
-            true => (elapsed_text(now, entry.updated_at).into(), info),
-            false => (age(now, entry.updated_at).into(), muted),
+            true => (elapsed_text(now, entry.updated_at).into(), look.text_3),
+            false => (age(now, entry.updated_at).into(), look.text_3),
         });
-        let title_color = match (running, offline) {
-            (true, _) => accent,
-            (false, true) => muted,
-            (false, false) => cx.theme().foreground,
-        };
+        let title_color = if offline { look.text_3 } else { look.text_1 };
         let spelled_out: SharedString = {
             let mut parts: Vec<String> = status_words(presence, offline)
                 .into_iter()
@@ -145,34 +151,40 @@ impl RenderOnce for SessionRow {
             parts.push(details(&entry));
             parts.join(" · ").into()
         };
-        let state = state_icon(presence).map(|icon| {
-            Icon::new(icon)
-                .xsmall()
-                .flex_none()
-                .text_color(tint(presence, cx))
-                .into_any_element()
-        });
+        let provider = Icon::empty()
+            .path(entry.icon.clone())
+            .size(PROVIDER_GLYPH)
+            .flex_none()
+            .text_color(look.text_2)
+            .into_any_element();
         let machine = Icon::new(match (offline, entry.machine.is_some()) {
             (true, _) => IconName::WifiOff,
             (false, true) => IconName::Server,
             (false, false) => IconName::Laptop,
         })
-        .xsmall()
+        .size(MACHINE_GLYPH)
         .flex_none()
-        .text_color(muted)
+        .text_color(look.text_3)
         .into_any_element();
+        // Every row has a 1px outline, clear unless it's selected or needs you, so none shifts when that changes.
+        let outline = match (selected, needs_you) {
+            (true, true) => look.needs_you_line,
+            (true, false) => look.line_selected,
+            (false, true) => look.needs_you_line_row,
+            (false, false) => transparent_black(),
+        };
         let opened = id.clone();
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
         let link_machine = route.clone();
         ThreeLineRow {
             key: format!("session:{id}").into(),
-            lead: mark,
+            lead,
             title: title.into(),
             title_color,
             time,
             arrow,
-            icons: state.into_iter().chain([machine]).collect(),
+            icons: vec![provider, machine],
             second: short_details(&entry).into(),
             spelled_out,
             // Always a third line, so every row is the same height: its newest answer, or its project before it has one.
@@ -185,6 +197,8 @@ impl RenderOnce for SessionRow {
         }
         .item(cx)
         .debug_selector(move || selector.clone())
+        .border_1()
+        .border_color(outline)
         // The row's own surface says it's selected; the kit's item owns the hover and the selected fill.
         .selected(selected)
         .cursor_pointer()

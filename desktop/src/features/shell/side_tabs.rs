@@ -13,7 +13,10 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-const BAR_HEIGHT: Pixels = px(30.);
+/// A segment's height, the mockup's `.seg button`.
+const SEGMENT_HEIGHT: Pixels = px(30.);
+/// The drag chip's size while a segment is dragged.
+const DRAG_SIZE: Size<Pixels> = size(px(96.), SEGMENT_HEIGHT);
 
 /// The group's visible tabs: each one's index, its name, and whether it's the one shown. The shown one is the group's
 /// active panel, as the kit marks it: a hidden active panel falls back to the first visible one.
@@ -57,15 +60,16 @@ fn tab(
         .id(("side-tab", ix))
         .selected_in_tree(Role::Tab, side_tab(name), name, shown)
         .debug_selector(move || format!("side-tab-{name}"))
-        .h_full()
+        .h(SEGMENT_HEIGHT)
         .px(SPACE[5])
         .items_center()
+        .justify_center()
         .rounded(CORNER_PILL)
         .border_1()
         .border_color(line)
         .bg(fill)
         .text_color(text)
-        .text_role(TextRole::Meta, cx)
+        .text_role(TextRole::Body, cx)
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .when(!shown, |tab| tab.hover(move |tab| tab.bg(hover)))
@@ -78,7 +82,7 @@ fn tab(
             tab.on_drag(drag, move |drag, offset, _, cx| {
                 cx.stop_propagation();
                 drag.set_drag_offset(offset);
-                drag.set_preview_size(size(px(96.), BAR_HEIGHT));
+                drag.set_preview_size(DRAG_SIZE);
                 cx.new(|_| super::drag_chip::DragChip(name))
             })
         })
@@ -100,7 +104,7 @@ fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
         .id("side-tabs-end")
         .h_full()
         .flex_1()
-        .min_w_4()
+        .min_w(SPACE[7])
         .when(group.is_droppable(), |end| {
             end.drag_over::<DragPanel>(move |end, _, _, _| end.bg(drop_target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
@@ -119,8 +123,8 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
         return Empty.into_any_element();
     }
     let look = Look::of(cx);
+    // Sized to its segments rather than the column, so the space after them stays a drop target.
     let track = h_flex()
-        .h_full()
         .flex_none()
         .p(SPACE[0])
         .gap(SPACE[0])
@@ -134,8 +138,8 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
         );
     h_flex()
         .id("side-tabs")
-        .h(BAR_HEIGHT)
-        .px_2()
+        .pt(SPACE[4])
+        .px(SPACE[4])
         .child(track)
         .child(end(group, cx))
         .into_any_element()

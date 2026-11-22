@@ -6,6 +6,8 @@
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
 //! after the placeholders.
 
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_FIELD, CORNER_PILL, FIELD_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -38,6 +40,11 @@ use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, Filt
 use crate::core::ui::provider_name::provider_name;
 
 const RAIL_TOPIC: &str = "sessionRail";
+/// An icon in the column's buttons and field.
+const ICON_SIZE: Pixels = px(16.);
+/// Between the search field's glass and its words.
+const FIELD_ICON_GAP: Pixels = px(9.);
+
 /// The pills' picks among the backend's preferences.
 const FILTERS_KEY: &str = "rail.filters";
 /// The pills' groups, in order.
@@ -386,22 +393,22 @@ impl SessionsPane {
         new_session: Button,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let theme = cx.theme();
-        // The mock's search: sunk below the card, on the ground's colour with a faint edge, a 13 px faint glass.
+        let look = Look::of(cx);
+        // The mock's search: an inset field in the tile, with its outline, and a text-3 glass.
         let field = h_flex()
             .flex_1()
             .min_w_0()
-            .h(px(30.))
-            .pl(px(10.))
-            .gap(px(5.))
-            .rounded(px(9.))
-            .bg(theme.background)
+            .h(FIELD_HEIGHT)
+            .px(SPACE[5])
+            .gap(FIELD_ICON_GAP)
+            .rounded(CORNER_FIELD)
+            .bg(look.inset)
             .border_1()
-            .border_color(theme.border.opacity(0.6))
+            .border_color(look.line)
             .child(
                 Icon::new(IconName::Search)
-                    .size(px(13.))
-                    .text_color(theme.muted_foreground.opacity(0.65)),
+                    .size(ICON_SIZE)
+                    .text_color(look.text_3),
             )
             .child(
                 Input::new(&self.filter)
@@ -410,11 +417,9 @@ impl SessionsPane {
                     .control(ids::SEARCH, "Search sessions"),
             );
         h_flex()
-            .pl(px(12.))
-            .pr(px(8.))
-            .pt(px(10.))
-            .pb(px(10.))
-            .gap(px(2.))
+            .pt(SPACE[5])
+            .px(SPACE[4])
+            .gap(SPACE[1])
             .capture_action(
                 cx.listener(|pane, _: &Escape, window, cx| pane.escape_filter(window, cx)),
             )
@@ -424,14 +429,14 @@ impl SessionsPane {
     }
 }
 
-/// The column's header buttons, the mock's `.ib`: 26 px, 8 px corners, a 15 px muted icon.
+/// The column's icon buttons, the mock's `.ib` on a tile: 32 round, a 16 icon in text-2.
 pub fn header_button(button: Button, cx: &App) -> Button {
     button
         .ghost()
-        .with_size(px(20.))
-        .size(px(26.))
-        .rounded(px(8.))
-        .text_color(cx.theme().muted_foreground)
+        .with_size(ICON_SIZE)
+        .size(BUTTON_HEIGHT)
+        .rounded(CORNER_PILL)
+        .text_color(Look::of(cx).text_2)
 }
 
 /// What an empty column says, from the connection's state (`None` before the backend's first ready line).

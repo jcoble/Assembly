@@ -7,7 +7,7 @@
 //! ten-second idle close is dropped: the window keeps no timers.
 
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::CORNER_PILL;
+use crate::core::theme::metrics::{CHIP_HEIGHT, CORNER_PILL, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::ExposedElement as _;
 use crate::core::ui::access::control_ids::{filter_back, filter_clear, filter_group, filter_value};
@@ -15,6 +15,12 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// A filter's chip: its chevron after the words, 5 from them, with 9 after it (the mockup's `.chip`).
+const CHIP_GAP: Pixels = px(5.);
+const CHIP_PADDING_RIGHT: Pixels = px(9.);
+/// The chevron and the clear x.
+const CHIP_ICON: Pixels = px(13.);
 
 pub struct FilterOption {
     pub value: String,
@@ -122,7 +128,7 @@ impl FilterPills {
     }
 }
 
-/// A 26 px round chip, outlined and unfilled as the look draws chips: the chip line and text-2 at rest, and when
+/// A 28 px round chip, outlined and unfilled as the look draws chips (the mockup's `.chip`): the chip line and text-2 at rest, and when
 /// picked the selected fill and line with text-1 at medium weight, as a selected row is drawn.
 fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
     let look = Look::of(cx);
@@ -134,8 +140,9 @@ fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
     h_flex()
         .id(id)
         .flex_none()
-        .h(px(26.))
-        .px(px(12.))
+        .h(CHIP_HEIGHT)
+        .px(SPACE[5])
+        .gap(CHIP_GAP)
         .rounded(CORNER_PILL)
         .text_role(TextRole::Meta, cx)
         .bg(fill)
@@ -154,9 +161,7 @@ impl Render for FilterPills {
             .key_context("FilterPills")
             .track_focus(&self.focus)
             .flex_wrap()
-            .gap(px(6.))
-            .px(px(12.))
-            .pb(px(10.))
+            .gap(SPACE[2])
             .on_key_down(cx.listener(|pills, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && pills.state.open.is_some() {
                     pills.close(cx);
@@ -171,10 +176,10 @@ impl Render for FilterPills {
             let picked = (self.state.groups.iter()).any(|group| !group.picked.is_empty());
             let clear = pill("filter-pills-clear", false, cx)
                 .exposed(Role::Button, filter_clear(self.area), "Clear filters")
-                .w(px(26.))
+                .w(CHIP_HEIGHT)
                 .px_0()
                 .justify_center()
-                .child(Icon::new(IconName::X).size(px(14.)))
+                .child(Icon::new(IconName::X).size(CHIP_ICON))
                 .on_click(cx.listener(|pills, _, _, cx| pills.pick(Pills::clear, cx)));
             return row.when(picked, |row| row.child(clear)).children(
                 (self.state.groups.iter().enumerate()).map(|(at, group)| {
@@ -185,7 +190,9 @@ impl Render for FilterPills {
                             filter_group(self.area, &group.label),
                             format!("{} filter: {words}", group.label),
                         )
+                        .pr(CHIP_PADDING_RIGHT)
                         .child(words)
+                        .child(Icon::new(IconName::ChevronDown).size(CHIP_ICON))
                         .on_click(cx.listener(move |pills, _, window, cx| {
                             window.focus(&pills.focus, cx);
                             pills.state.open(at);

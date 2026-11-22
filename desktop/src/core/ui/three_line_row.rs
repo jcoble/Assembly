@@ -1,7 +1,8 @@
-//! The three-line list row, on the kit's list item, for anything shown that way: a lead mark, title, time and arrow;
-//! small icons and a detail spelled out in a tooltip; and one more line of text. Everything but the marks, time and
-//! arrow gives way as the list narrows. It takes display values only. `item` hands back the list item, so the owner
-//! adds what its row does: selection, clicks and menus.
+//! The three-line list row, on the kit's list item, for anything shown that way, as the look's session row draws it:
+//! a lead glyph in its own column, then the title (Body 500) with its time and arrow; small icons and a detail in
+//! Meta text-3, spelled out in a tooltip; and one more line in Meta text-2. Everything but the marks, time and arrow
+//! gives way as the list narrows. It takes display values only. `item` hands back the list item, so the owner adds
+//! what its row does: selection, clicks and menus.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,12 +16,17 @@ use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_FIELD, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::row;
 
-/// Above and below a row's three lines.
+/// Above and below a row's three lines, and before its glyph (the mockup's `.srow`, 7 10 7 9).
 const ROW_PADDING: Pixels = px(7.);
+const ROW_PADDING_LEFT: Pixels = px(9.);
+/// Between the second line's icons and words.
+const SECOND_GAP: Pixels = px(5.);
 
 /// The row's arrow: which way it points and what pressing it does.
 #[derive(Clone)]
@@ -51,11 +57,11 @@ pub struct ThreeLineRow {
 pub fn row_height(cx: &App) -> Pixels {
     let (title, meta) = Preferences::read(cx, |appearance| {
         (
-            appearance.ui_text(TextRole::Title).1,
+            appearance.ui_text(TextRole::Body).1,
             appearance.ui_text(TextRole::Meta).1,
         )
     });
-    title + meta * 2. + ROW_PADDING * 2. + px(4.)
+    title + meta * 2. + ROW_PADDING * 2.
 }
 
 /// The fill the kit's list item gives a selected row, for what has to match it, such as an open row's body.
@@ -76,9 +82,8 @@ pub fn tabular() -> FontFeatures {
 impl ThreeLineRow {
     pub fn item(self, cx: &App) -> ListItem {
         let (_, title_height) =
-            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Title));
-        let theme = cx.theme();
-        let (muted, accent, radius) = (theme.muted_foreground, theme.caret, theme.radius);
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+        let look = Look::of(cx);
         let key = self.key;
         let spoken = format!("{}, {}", self.title, self.spelled_out);
         let arrow = self.arrow.map(|arrow| {
@@ -109,21 +114,20 @@ impl ThreeLineRow {
                 })
         });
         let first = h_flex()
-            .gap_2()
-            .child(self.lead)
+            .gap(SPACE[3])
             .child(
                 Label::new(self.title)
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_role(TextRole::Title, cx)
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(self.title_color),
             )
             .child(
                 h_flex()
                     .flex_none()
-                    .gap_1()
+                    .gap(SPACE[1])
                     .children(self.time.map(|(time, color)| {
                         Label::new(time)
                             .text_role(TextRole::Meta, cx)
@@ -135,7 +139,7 @@ impl ThreeLineRow {
         let spelled_out = self.spelled_out;
         let second = h_flex()
             .id(SharedString::from(format!("state:{key}")))
-            .gap_1p5()
+            .gap(SECOND_GAP)
             .tooltip(move |window, cx| Tooltip::new(spelled_out.clone()).build(window, cx))
             .children(self.icons)
             .child(
@@ -144,38 +148,48 @@ impl ThreeLineRow {
                     .min_w_0()
                     .truncate()
                     .text_role(TextRole::Meta, cx)
-                    .text_color(muted),
+                    .text_color(look.text_3),
             );
         let third = Label::new(self.third)
             .w_full()
             .truncate()
             .text_role(TextRole::Meta, cx)
-            .text_color(muted);
+            .text_color(look.text_2);
+        // The unread dot sits in the left padding, level with the title, so it doesn't move anything.
         let dot = self.dot.then(|| {
             div()
                 .absolute()
-                .left(px(3.))
-                .top(ROW_PADDING + title_height * 0.5 - px(3.))
-                .size(px(6.))
+                .left(SPACE[0])
+                .top(ROW_PADDING + title_height * 0.5 - SPACE[0] * 1.5)
+                .size(SPACE[2])
                 .rounded_full()
-                .bg(accent)
+                .bg(look.accent)
         });
         ListItem::new(key.clone())
             .control(row(&key), spoken)
             .w_full()
-            .px_3()
+            .pl(ROW_PADDING_LEFT)
+            .pr(SPACE[4])
             .py(ROW_PADDING)
-            .rounded(radius)
+            .rounded(CORNER_FIELD)
             .children(dot)
+            // The glyph in its own column, 10 before the lines and 2 down so it sits level with the title.
             // Zero wide but at least full: the kit's wrapper would otherwise hold the row at its text's width.
             .child(
-                v_flex()
+                h_flex()
                     .w_0()
                     .min_w_full()
-                    .gap_0p5()
-                    .child(first)
-                    .child(second)
-                    .child(third),
+                    .items_start()
+                    .gap(SPACE[4])
+                    .child(div().flex_none().mt(SPACE[0]).child(self.lead))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(first)
+                            .child(second)
+                            .child(third),
+                    ),
             )
     }
 }
