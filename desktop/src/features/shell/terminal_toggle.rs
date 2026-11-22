@@ -2,14 +2,13 @@
 //! wherever it has been dragged, opens its dock on it, or shuts that dock when it's already showing.
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::Selectable as _;
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::*;
 
 use super::default_layout::TERMINAL;
-use crate::components::glass_pill::GlassPill;
-use crate::core::ui::access::ExposedElement as _;
+use crate::components::glass_button::glass_icon_button;
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::topbar;
 use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 
@@ -90,13 +89,12 @@ pub fn toggle_terminal(dock: &Entity<DockArea>, window: &mut Window, cx: &mut Ap
     }
 }
 
-/// The top row's Terminal button, an icon pill on the glass, pressed while the Terminal is showing.
+/// The top row's Terminal button, a glass icon button, picked while the Terminal is showing.
 pub fn button(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
     let showing = terminal_showing(&dock, cx);
     div().debug_selector(|| "terminal-toggle".into()).child(
-        GlassPill::icon("terminal-toggle", IconName::SquareTerminal)
-            .selected_in_tree(Role::Button, topbar::TERMINAL_TOGGLE, TERMINAL, showing)
-            .selected(showing)
+        glass_icon_button("terminal-toggle", IconName::SquareTerminal, showing, cx)
+            .control(topbar::TERMINAL_TOGGLE, TERMINAL)
             .tooltip(TERMINAL)
             .on_click(move |_, window, cx| toggle_terminal(&dock, window, cx)),
     )

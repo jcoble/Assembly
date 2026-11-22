@@ -1,22 +1,18 @@
-//! The sessions column's tabs (Sessions, Files, Search) as the look's segmented control: an inset track with an
-//! outline, the shown pane's segment in text-1 on the selected fill with the selected line, the others in text-2.
-//! They're drawn here rather than with the kit's tab bar, whose selected tab is fixed to the accent colour. Selection
-//! and pane drag/drop stay owned by the dock.
+//! The sessions column's tabs (Sessions, Files, Search) as the kit's segmented tab bar, with the look's outline on
+//! its track. Selection and pane drag/drop stay owned by the dock. Called by the dock for the left column's groups.
 
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_PILL, SPACE};
-use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::access::ExposedElement as _;
+use crate::core::theme::metrics::SPACE;
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::side_tab;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// A segment's height, the mockup's `.seg button`.
-const SEGMENT_HEIGHT: Pixels = px(30.);
 /// The drag chip's size while a segment is dragged.
-const DRAG_SIZE: Size<Pixels> = size(px(96.), SEGMENT_HEIGHT);
+const DRAG_SIZE: Size<Pixels> = size(px(96.), px(30.));
 
 /// The group's visible tabs: each one's index, its name, and whether it's the one shown. The shown one is the group's
 /// active panel, as the kit marks it: a hidden active panel falls back to the first visible one.
@@ -34,48 +30,21 @@ fn tabs(group: &TabGroupContext, cx: &App) -> Vec<(usize, &'static str, bool)> {
         .collect()
 }
 
-/// One segment: a click shows its pane, a drag carries it out (unless the group may not be rearranged, as the kit
-/// asks), and a pane dropped on it joins the group there. `shown` draws it as the selected segment.
-fn tab(
-    group: &TabGroupContext,
-    ix: usize,
-    name: &'static str,
-    shown: bool,
-    look: &Look,
-    cx: &App,
-) -> Stateful<Div> {
+/// One segment, the kit's segmented tab: a click shows its pane, a drag carries it out (unless the group may not be
+/// rearranged, as the kit asks), and a pane dropped on it joins the group there. The bar marks the shown one.
+fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab {
     let drag = group
         .is_draggable()
         .then(|| group.drag_panel(ix, cx))
         .flatten();
     let drop_target = cx.theme().tokens.drop_target;
     let (select, drop) = (group.clone(), group.clone());
-    let hover = look.fill_hover;
-    // A 1px outline on every segment, clear on the unselected ones, so selecting one doesn't shift the row.
-    let (text, fill, line) = match shown {
-        true => (look.text_1, look.fill_selected, look.line_selected),
-        false => (look.text_2, transparent_black(), transparent_black()),
-    };
-    h_flex()
-        .id(("side-tab", ix))
-        .selected_in_tree(Role::Tab, side_tab(name), name, shown)
+    Tab::new()
+        .label(name)
+        .control(side_tab(name), name)
         .debug_selector(move || format!("side-tab-{name}"))
-        .h(SEGMENT_HEIGHT)
-        .px(SPACE[5])
-        .items_center()
-        .justify_center()
-        .rounded(CORNER_PILL)
-        .border_1()
-        .border_color(line)
-        .bg(fill)
-        .text_color(text)
-        .text_role(TextRole::Body, cx)
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer()
-        .when(!shown, |tab| tab.hover(move |tab| tab.bg(hover)))
-        .child(name)
         .on_click(move |_, window, cx| {
-            select.select_tab(ix,window,cx);
+            select.select_tab(ix, window, cx);
             crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
         })
         .when_some(drag, |tab, drag| {
@@ -115,32 +84,33 @@ fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
         })
 }
 
-/// The row: the segmented control's inset, outlined track holding one segment per visible pane, then the space a
-/// dropped pane joins at the end.
+/// The row: the kit's segmented bar holding one segment per visible pane, with the look's outline on its track, then
+/// the space a dropped pane joins at the end.
 pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
     let tabs = tabs(group, cx);
     if tabs.is_empty() {
         return Empty.into_any_element();
     }
     let look = Look::of(cx);
-    // Sized to its segments rather than the column, so the space after them stays a drop target.
-    let track = h_flex()
+    let shown = tabs.iter().position(|(_, _, shown)| *shown);
+    // Sized to its segments rather than the column, so the space after them stays a drop target. The kit's small
+    // size keeps a segment within the header's 30px.
+    let bar = TabBar::new("side-tabs-bar")
+        .segmented()
+        .small()
         .flex_none()
-        .p(SPACE[0])
-        .gap(SPACE[0])
-        .rounded(CORNER_PILL)
-        .bg(look.inset)
         .border_1()
         .border_color(look.line)
+        .when_some(shown, |bar, shown| bar.selected_index(shown))
         .children(
             tabs.into_iter()
-                .map(|(ix, name, shown)| tab(group, ix, name, shown, &look, cx)),
+                .map(|(ix, name, _)| tab(group, ix, name, cx)),
         );
     h_flex()
         .id("side-tabs")
         .pt(SPACE[4])
         .px(SPACE[4])
-        .child(track)
+        .child(bar)
         .child(end(group, cx))
         .into_any_element()
 }

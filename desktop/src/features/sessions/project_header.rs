@@ -1,8 +1,9 @@
 //! The rail's section and project headers, as the look's group header (`.gh`): fold chevron, name, the backend's
-//! count, then for a project its machines and a "+ New" pill.
+//! count, then for a project its machines and a "+ New" chip.
 
+use crate::components::chip_button::chip_button;
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_PILL, CORNER_TAG, GROUP_HEIGHT, SPACE};
+use crate::core::theme::metrics::{CORNER_TAG, GROUP_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::three_line_row::tabular;
@@ -14,11 +15,9 @@ use gpui_kit::*;
 
 /// The fold chevron's button.
 const CHEVRON_SIZE: Pixels = px(20.);
-/// The project's letter mark, as a provider mark.
-const MARK_SIZE: Pixels = px(20.);
-/// The machine icons, the chevron's and the + New pill's glyphs.
+/// The machine icons, the chevron's and the + New chip's glyphs.
 const MACHINE_ICON: Pixels = px(13.);
-/// The "+ New" pill, the mock's `.gh .new`.
+/// The "+ New" chip, the mock's `.gh .new`.
 const NEW_HEIGHT: Pixels = px(24.);
 const NEW_PADDING_LEFT: Pixels = px(7.);
 
@@ -59,40 +58,6 @@ impl ProjectHeader {
     }
 }
 
-/// The badge's letters, from the label's last part ("owner/repo" names the repo): the first letters of its first two
-/// words ("EdiPlatform" and "rental-management" are two words each), or a one-word name's first two letters.
-pub fn badge_letters(label: &str) -> String {
-    let name = label.rsplit('/').next().unwrap_or(label);
-    let mut words = Vec::new();
-    let mut last: Option<char> = None;
-    for (at, letter) in name.char_indices() {
-        let starts = letter.is_alphanumeric()
-            && match last {
-                None => true,
-                Some(last) => {
-                    !last.is_alphanumeric() || (last.is_lowercase() && letter.is_uppercase())
-                }
-            };
-        if starts {
-            words.push(at);
-        }
-        last = Some(letter);
-    }
-    let letters: String = match words[..] {
-        [first, second, ..] => [first, second]
-            .iter()
-            .filter_map(|at| name[*at..].chars().next())
-            .collect(),
-        [first] => name[first..]
-            .chars()
-            .filter(|letter| letter.is_alphanumeric())
-            .take(2)
-            .collect(),
-        [] => String::new(),
-    };
-    letters.to_uppercase()
-}
-
 impl RenderOnce for ProjectHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let look = Look::of(cx);
@@ -104,23 +69,6 @@ impl RenderOnce for ProjectHeader {
                 &look,
                 self.on_toggle,
             ))
-            // The project's two letters on a neutral mark, as a provider mark is drawn.
-            .child(
-                div()
-                    .flex_none()
-                    .size(MARK_SIZE)
-                    .rounded(CORNER_TAG)
-                    .bg(look.card_raised)
-                    .border_1()
-                    .border_color(look.hairline_strong)
-                    .text_color(look.text_2)
-                    .text_role(TextRole::Meta, cx)
-                    .font_weight(FontWeight::BOLD)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(badge_letters(&self.label)),
-            )
             .child(label(self.label, &look, cx))
             .child(count(self.count, &look, cx))
             // Which machines it's on, as icons that say so on hover.
@@ -146,30 +94,22 @@ impl RenderOnce for ProjectHeader {
                     )
             }))
             .child(div().flex_1())
-            // "+ New": an outlined pill, the mock's `.gh .new`.
+            // "+ New": a chip, the mock's `.gh .new`.
             .child(
-                h_flex()
-                    .id(new_id)
-                    .role(Role::Button)
-                    .aria_label("New session in this project")
-                    .flex_none()
+                chip_button(new_id, false, cx)
+                    .named("New session in this project")
                     .h(NEW_HEIGHT)
                     .pl(NEW_PADDING_LEFT)
                     .pr(SPACE[4])
-                    .gap(SPACE[1])
-                    .rounded(CORNER_PILL)
-                    .border_1()
-                    .border_color(look.line_chip)
-                    .text_color(look.text_2)
-                    .text_role(TextRole::Meta, cx)
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .hover(move |pill| pill.bg(look.fill_hover))
-                    .tooltip(|window, cx| {
-                        Tooltip::new("New session in this project").build(window, cx)
-                    })
-                    .child(Icon::new(IconName::Plus).size(MACHINE_ICON))
-                    .child("New")
+                    .tooltip("New session in this project")
+                    .child(
+                        h_flex()
+                            .gap(SPACE[1])
+                            .text_role(TextRole::Meta, cx)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(Icon::new(IconName::Plus).size(MACHINE_ICON))
+                            .child("New"),
+                    )
                     .on_click(self.on_new),
             )
     }
@@ -268,18 +208,4 @@ fn count(count: usize, look: &Look, cx: &App) -> Div {
         .font_features(tabular())
         .text_color(look.text_3)
         .child(count.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::badge_letters;
-
-    #[test]
-    fn a_badge_takes_two_letters_from_the_repo_name() {
-        assert_eq!(badge_letters("jcoble/Assembly"), "AS");
-        assert_eq!(badge_letters("EdiPlatform"), "EP");
-        assert_eq!(badge_letters("rental-management"), "RM");
-        assert_eq!(badge_letters("x"), "X");
-        assert_eq!(badge_letters(""), "");
-    }
 }

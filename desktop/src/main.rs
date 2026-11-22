@@ -7,8 +7,10 @@ mod activity;
 mod core;
 mod features;
 mod components {
-    #[path = "glass_pill.rs"]
-    pub mod glass_pill;
+    #[path = "chip_button.rs"]
+    pub mod chip_button;
+    #[path = "glass_button.rs"]
+    pub mod glass_button;
 }
 #[path = "components/hinted_item/mod.rs"]
 mod hinted_item;

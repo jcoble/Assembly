@@ -1,13 +1,13 @@
 //! `TopBar` owns the window's top row, on the glass, as the rule sheet's "Window chrome and top bar" draws it. On the
 //! left: the window buttons (on macOS the title bar is transparent and its buttons sit inside this row), Home as an
-//! icon pill whose menu opens Build Board and Settings, and Board as an outlined pill with its grey count of live
+//! icon button whose menu opens Build Board and Settings, and Board as an outlined pill with its grey count of live
 //! sessions. The left part keeps the sessions column's width, so the tabs start over the chat. In the middle: the
 //! open tabs (top_tabs.rs). On the right: the amber "N need you" pill when something needs the owner, which opens
 //! the Board on what needs you, then the Terminal and drawer toggles. Empty glass in the row moves the window and a
 //! double click zooms it, as a title bar does. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
-use crate::components::glass_pill::{GlassPill, PILL_ICON};
+use crate::components::glass_button::{GLASS_ICON, glass_button, glass_icon_button};
 use crate::features::remote_install::restart_button::RestartButton;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::dock::{DockArea, DockPlacement};
@@ -25,7 +25,7 @@ use crate::core::theme::metrics::{
     CORNER_PILL, COUNT_HEIGHT, COUNT_MIN_WIDTH, SPACE, TOP_BAR_HEIGHT,
 };
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::access::ExposedElement as _;
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::topbar as ids;
 use crate::features::board::ToggleBoard;
 use crate::features::board::board_panel::{BoardMemory, BoardPanel, TopBarCounts};
@@ -206,17 +206,21 @@ impl TopBar {
             .text_role(TextRole::Meta, cx)
             .font_weight(FontWeight::SEMIBOLD)
             .child(self.counts.live.to_string());
-        let trigger = GlassPill::new("board")
-            .exposed(Role::Button, ids::BOARD, "Board")
-            .outlined()
+        // The kit's button puts its children in a row of its own, so the words carry their text role themselves.
+        let trigger = glass_button("board", self.board.is_some(), cx)
+            .control(ids::BOARD, "Board")
+            .border_1()
+            .border_color(look.on_glass_line_chip)
             .pl(SPACE[5])
             .pr(BOARD_PADDING_RIGHT)
-            .gap(SPACE[3])
-            .text_role(TextRole::Body, cx)
-            .font_weight(FontWeight::MEDIUM)
             .tooltip("Build Board")
-            .child(Icon::new(IconName::LayoutDashboard).size(PILL_ICON))
-            .child("Board")
+            .child(Icon::new(IconName::LayoutDashboard).size(GLASS_ICON))
+            .child(
+                div()
+                    .text_role(TextRole::Body, cx)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("Board"),
+            )
             .child(count);
         // A weak capture prevents the kit's retained content builder from keeping a dismissed Board alive.
         let board = self.board.as_ref().map(Entity::downgrade);
@@ -240,25 +244,25 @@ impl TopBar {
     /// "N need you": amber outline on the inset glass fill, only while something needs the owner.
     fn needs_pill(&self, look: &Look, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let count = self.counts.needs.clone()?;
-        let pill = GlassPill::new("needs-you")
-            .exposed(Role::Button, ids::BOARD_BADGE, format!("{count} need you"))
+        let pill = glass_button("needs-you", false, cx)
+            .control(ids::BOARD_BADGE, format!("{count} need you"))
             .pl(SPACE[4])
             .pr(SPACE[6])
-            .gap(SPACE[3])
             .bg(look.on_glass_inset)
+            .border_1()
             .border_color(look.needs_you_line)
-            .text_color(look.on_glass_text_1)
-            .text_role(TextRole::Body, cx)
-            .font_weight(FontWeight::MEDIUM)
             .tooltip("Open the Board on what needs you")
             .child(
                 Icon::new(IconName::CircleQuestionMark)
-                    .size(PILL_ICON)
+                    .size(GLASS_ICON)
                     .text_color(look.needs_you),
             )
             .child(
                 h_flex()
                     .gap(SPACE[1])
+                    .text_color(look.on_glass_text_1)
+                    .text_role(TextRole::Body, cx)
+                    .font_weight(FontWeight::MEDIUM)
                     .child(div().font_weight(FontWeight(650.)).child(count))
                     .child("need you"),
             )
@@ -266,10 +270,10 @@ impl TopBar {
         Some(div().debug_selector(|| "board-badge".into()).child(pill))
     }
 
-    /// Home: an icon pill whose menu opens Build Board, Projects and the settings.
-    fn home_button() -> impl IntoElement {
-        GlassPill::icon("home", IconName::House)
-            .exposed(Role::Button, ids::HOME, "Home")
+    /// Home: a glass icon button whose menu opens Build Board, Projects and the settings.
+    fn home_button(cx: &App) -> impl IntoElement {
+        glass_icon_button("home", IconName::House, false, cx)
+            .control(ids::HOME, "Home")
             .tooltip("Home")
             .dropdown_menu(|menu, _, _| {
                 menu.min_w(px(190.))
@@ -333,7 +337,7 @@ impl Render for TopBar {
                     .flex_none()
                     .w(LEFT_PADDING + if lights { LIGHTS_WIDTH } else { px(0.) }),
             )
-            .child(Self::home_button())
+            .child(Self::home_button(cx))
             .child(self.board_button(&look, cx))
             .child(self.drag_area("top-bar-left-glass", cx).flex_1());
         let right = h_flex()

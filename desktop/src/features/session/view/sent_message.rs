@@ -1,8 +1,10 @@
 //! `SentMessage` draws a prompt: its text, folded past ten lines until opened, the images attached to it (their
 //! "Attached image:" lines taken off the text) as chips that open the lightbox, and who sent it when another
-//! session did. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
+//! session did. The prompt sits in the kit's chat bubble. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
 
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
+use gpui_kit::component::bubble::{Bubble, BubbleContent, BubbleVariant};
+use gpui_kit::component::message::MessageAlignment;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -13,8 +15,10 @@ use crate::core::theme::metrics::CORNER_BUBBLE;
 
 use super::session_action::{OnAction, SessionAction};
 
-/// The bubble's widest, the approved mock's `.bubble`.
+/// The bubble's widest and its padding, the approved mock's `.bubble`.
 const BUBBLE_WIDTH: Pixels = px(470.);
+const BUBBLE_PADDING_X: Pixels = px(16.);
+const BUBBLE_PADDING_Y: Pixels = px(10.);
 /// A prompt folds past this many lines.
 pub const FOLD_LINES: usize = 10;
 
@@ -122,17 +126,25 @@ impl RenderOnce for SentMessage {
             .max_w(BUBBLE_WIDTH)
             .gap_1()
             .children(sender)
+            // The kit's chat bubble, its surface drawn as the mock's `.bubble`.
             .child(
-                v_flex()
-                    .px(px(16.))
-                    .py(px(10.))
-                    .text_size(chat_size)
-                    .line_height(chat_height)
-                    .rounded(CORNER_BUBBLE)
-                    .bg(look.bubble)
-                    .border_1()
-                    .border_color(look.bubble_border)
-                    .gap_1()
+                Bubble::new()
+                    .with_variant(BubbleVariant::Outline)
+                    .alignment(MessageAlignment::End)
+                    .max_w_full()
+                    .content(
+                        BubbleContent::new()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px(BUBBLE_PADDING_X)
+                            .py(BUBBLE_PADDING_Y)
+                            .text_size(chat_size)
+                            .line_height(chat_height)
+                            .rounded(CORNER_BUBBLE)
+                            .bg(look.bubble)
+                            .border_color(look.bubble_border),
+                    )
                     .when(!text.is_empty(), |bubble| bubble.child(text.to_string()))
                     .children(toggle),
             )

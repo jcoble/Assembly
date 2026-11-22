@@ -394,8 +394,15 @@ impl SessionsPane {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let look = Look::of(cx);
-        // The mock's search: an inset field in the tile, with its outline, and a text-3 glass.
-        let field = h_flex()
+        // The mock's search: the kit's field, inset in the tile with its outline, a text-3 glass before the words.
+        let field = Input::new(&self.filter)
+            .small()
+            .control(ids::SEARCH, "Search sessions")
+            .prefix(
+                Icon::new(IconName::Search)
+                    .size(ICON_SIZE)
+                    .text_color(look.text_3),
+            )
             .flex_1()
             .min_w_0()
             .h(FIELD_HEIGHT)
@@ -403,19 +410,7 @@ impl SessionsPane {
             .gap(FIELD_ICON_GAP)
             .rounded(CORNER_FIELD)
             .bg(look.inset)
-            .border_1()
-            .border_color(look.line)
-            .child(
-                Icon::new(IconName::Search)
-                    .size(ICON_SIZE)
-                    .text_color(look.text_3),
-            )
-            .child(
-                Input::new(&self.filter)
-                    .small()
-                    .appearance(false)
-                    .control(ids::SEARCH, "Search sessions"),
-            );
+            .border_color(look.line);
         h_flex()
             .pt(SPACE[5])
             .px(SPACE[4])
