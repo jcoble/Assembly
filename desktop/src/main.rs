@@ -11,6 +11,8 @@ mod components {
     pub mod chip_button;
     #[path = "glass_button.rs"]
     pub mod glass_button;
+    #[path = "icon_segments.rs"]
+    pub mod icon_segments;
 }
 #[path = "components/hinted_item/mod.rs"]
 mod hinted_item;

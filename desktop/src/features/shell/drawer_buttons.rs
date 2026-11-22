@@ -1,19 +1,15 @@
-//! The drawer's tool capsule (the kit's segmented tab bar, one icon segment per tool), overflow menu and close button,
+//! The drawer's tool capsule (icon segments on the kit's button group, components/icon_segments.rs), overflow menu and close button,
 //! as RightPanelTabs.svelte arranged them: the permanent tools, then the one overflow tool last picked, which the next
 //! pick replaces. Only the close button shuts the drawer. The dock
 //! remains the authority for the shown pane and its saved layout.
 
-use crate::core::theme::look::Look;
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::{drawer as ids, drawer_pane, topbar};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{Icon, Sizable as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::*;
 
 use super::default_layout::{
@@ -21,6 +17,7 @@ use super::default_layout::{
 };
 use super::terminal_toggle::menu_item;
 use crate::components::glass_button::glass_icon_button;
+use crate::components::icon_segments::{icon_segments, segment};
 
 const CONTROL: Pixels = px(28.);
 const GLYPH: Pixels = px(14.);
@@ -91,14 +88,12 @@ impl RenderOnce for DrawerButtons {
             .into_iter()
             .filter(|(_, name, _)| primary(name) || extra == Some(*name))
             .collect();
-        let selected = panes.iter().position(|pane| open && pane.2);
-        let tabs = panes.into_iter().map(|(id, name, _)| {
+        let tabs = panes.into_iter().map(|(id, name, shown)| {
             let dock = self.dock.clone();
-            Tab::new()
-                .icon(icon(name))
+            segment(SharedString::from(format!("drawer-pane-{name}")), icon(name), open && shown, cx)
                 .control(drawer_pane(name), name)
                 .debug_selector(move || format!("drawer-button-{name}"))
-                .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
+                .tooltip(name)
                 .on_click(move |_, window, cx| {
                     cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     dock.update(cx, |dock, cx| match press(open) {
@@ -110,14 +105,7 @@ impl RenderOnce for DrawerButtons {
                     })
                 })
         });
-        let capsule = TabBar::new("drawer-panes")
-            .segmented()
-            .small()
-            .flex_none()
-            .border_1()
-            .border_color(Look::of(cx).line)
-            .when_some(selected, |bar, selected| bar.selected_index(selected))
-            .children(tabs);
+        let capsule = icon_segments("drawer-panes", cx).children(tabs);
         let dock = self.dock.clone();
         let menu = Button::new("drawer-overflow")
             .control(ids::MORE_PANELS, "More panels")
