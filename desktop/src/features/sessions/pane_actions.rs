@@ -122,12 +122,16 @@ impl SessionsPane {
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
-        let call = socket.read(cx).call::<Value>(
-            "machines",
-            "connect",
-            json!({ "machine": machine }),
-            None,
-        );
+        // The answer is the machine as the attempt left it: still unreachable carries the reason, which is the
+        // failure to show even though the call itself answered.
+        let call = socket
+            .read(cx)
+            .call::<crate::core::state::machine::Machine>(
+                "machines",
+                "connect",
+                json!({ "machine": machine }),
+                None,
+            );
         self.row_error = None;
         let reached = machine.clone();
         let task = cx.spawn(async move |pane, cx| {
@@ -140,10 +144,19 @@ impl SessionsPane {
                 {
                     pane.connecting = None;
                 }
-                if let Outcome::Failed(failure) = outcome {
-                    pane.row_error =
-                        Some(format!("Couldn't connect to {reached}: {}", failure.message).into());
-                }
+                pane.row_error = match outcome {
+                    Outcome::Ok(machine) if !machine.reachable => Some(
+                        match machine.reason {
+                            Some(reason) => format!("Couldn't connect to {reached}: {reason}"),
+                            None => format!("Couldn't connect to {reached}."),
+                        }
+                        .into(),
+                    ),
+                    Outcome::Failed(failure) => {
+                        Some(format!("Couldn't connect to {reached}: {}", failure.message).into())
+                    }
+                    _ => pane.row_error.take(),
+                };
                 cx.notify();
             })
             .ok();

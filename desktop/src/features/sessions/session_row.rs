@@ -9,7 +9,7 @@ use std::rc::Rc;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex};
 use gpui_kit::*;
 
 use super::history::age::{age, elapsed_text};
@@ -181,11 +181,12 @@ impl RenderOnce for SessionRow {
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
         let link_machine = route.clone();
-        // At the row's bottom right, over it rather than in its layout, as the old rail had it: every row on a
-        // machine that isn't answering offers the connection right there.
+        // Beside the row at its bottom right, under its age, as the old rail had it: every row on a machine that
+        // isn't answering offers the connection right there. Its own column, so the row's lines end before it
+        // and its clicks are its own.
         let connect = connect.zip(route.clone()).map(|(connect, machine)| {
             let on_connect = connect.on_connect;
-            div().absolute().right(px(16.)).bottom(px(6.)).child(
+            div().flex_none().pb(px(6.)).pr(px(8.)).child(
                 Button::new(SharedString::from(format!("connect:{id}")))
                     .control(
                         format!("{}.connect", row_id(&format!("session:{id}"))),
@@ -246,7 +247,11 @@ impl RenderOnce for SessionRow {
                     }),
             )
         });
-        div().relative().w_full().child(item).children(connect)
+        h_flex()
+            .w_full()
+            .items_end()
+            .child(div().flex_1().min_w_0().child(item))
+            .children(connect)
     }
 }
 
