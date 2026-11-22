@@ -4,36 +4,23 @@
 //! usage quota feeds; nothing here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage and resource popovers in ShellOverlays.svelte.
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
+use gpui_kit::component::h_flex;
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::*;
 
+use crate::components::quiet_button::quiet_button;
 use crate::core::intents::open_settings::OpenSettings;
-use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_PILL, CRUMB_HEIGHT, SPACE};
+use crate::core::theme::metrics::{CRUMB_HEIGHT, SPACE};
 use crate::core::ui::access::control_ids::utility as ids;
 use crate::core::ui::access::{Control as _, say};
-
-/// A button's icon.
-const ICON_SIZE: Pixels = px(16.);
 
 pub struct UtilityStrip;
 
 impl Render for UtilityStrip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let look = Look::of(cx);
         // The mock's `.foot`: three quiet buttons, each an icon and its word in text-2.
-        let button = |id: &'static str, icon: IconName| {
-            Button::new(id)
-                .ghost()
-                .h(BUTTON_HEIGHT)
-                .px(SPACE[4])
-                .rounded(CORNER_PILL)
-                .text_color(look.text_2)
-                .icon(Icon::new(icon).size(ICON_SIZE))
-                .label(id)
-        };
+        let button = |id: &'static str, icon: IconName| quiet_button(id, icon, id, cx);
         let settings = button("Settings", IconName::Settings)
             .control(ids::SETTINGS, "Settings")
             .tooltip("Settings")

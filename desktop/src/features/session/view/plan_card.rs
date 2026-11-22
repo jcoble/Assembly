@@ -9,7 +9,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::item_row::CHAT_COLUMN;
+use super::item_row::chat_column;
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::rows::plan::{PlanItem, PlanStatus};
@@ -155,7 +155,7 @@ impl RenderOnce for PlanCard {
         div()
             .relative()
             .w_full()
-            .max_w(CHAT_COLUMN)
+            .max_w(chat_column())
             .mx_auto()
             .mb(px(10.))
             .flex()

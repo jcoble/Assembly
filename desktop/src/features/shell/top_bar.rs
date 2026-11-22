@@ -60,6 +60,8 @@ pub fn window_options() -> WindowOptions {
     }
 }
 
+/// The window's 52px glass bar: Home and Board at the left, the content tabs, then "N need you" and the terminal and
+/// drawer toggles at the right, with empty glass between them that moves the window.
 pub struct TopBar {
     dock: Entity<DockArea>,
     /// Redraws the bar whenever the dock does, so the Home cap follows a drag.

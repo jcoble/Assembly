@@ -13,6 +13,10 @@ mod components {
     pub mod glass_button;
     #[path = "icon_segments.rs"]
     pub mod icon_segments;
+    #[path = "picker_pill.rs"]
+    pub mod picker_pill;
+    #[path = "quiet_button.rs"]
+    pub mod quiet_button;
 }
 #[path = "components/hinted_item/mod.rs"]
 mod hinted_item;

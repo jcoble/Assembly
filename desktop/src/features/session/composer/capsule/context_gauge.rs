@@ -19,6 +19,8 @@ use crate::features::session::composer::context_meter::ContextMeter;
 const RING: Pixels = px(18.);
 const RING_GAP: Pixels = px(7.);
 
+/// How full the agent's context window is, at the composer's controls: the ring, "N% left", and the exact numbers
+/// on hover.
 #[derive(IntoElement)]
 pub struct ContextGauge {
     pub meter: ContextMeter,

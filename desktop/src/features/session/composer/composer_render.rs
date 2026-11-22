@@ -5,7 +5,7 @@
 //! sits above the box, and the "/" list floats just above it.
 
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_COMPOSER, composer_shadow};
+use crate::core::theme::metrics::{COMPOSER_WIDTH, CORNER_COMPOSER, composer_shadow};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::composer as ids;
@@ -25,9 +25,14 @@ use crate::features::session::composer::attachment_card::AttachmentCard;
 use crate::features::session::composer::shape::{Facts, hint, look};
 use crate::features::session::composer::slash_list::SlashList;
 
-/// The box is the look's 724 wide at most (metrics::COMPOSER_WIDTH), with 22 on either side of it in a narrower pane.
-const COLUMN: Pixels = px(768.);
+/// The 22 on either side of the box in a narrower pane.
 const GUTTER: Pixels = px(22.);
+
+/// The composer's column: the box at the look's 724 at most (metrics::COMPOSER_WIDTH), with its gutter on either side.
+fn column() -> Pixels {
+    COMPOSER_WIDTH + GUTTER * 2.
+}
+
 /// Three lines of room once the box is open, so opening is visible.
 const OPEN_DRAFT: Pixels = px(63.);
 
@@ -242,7 +247,7 @@ impl Render for Composer {
         let column = v_flex()
             .relative()
             .w_full()
-            .max_w(COLUMN)
+            .max_w(column())
             .mx_auto()
             .px(GUTTER)
             .pt_2()

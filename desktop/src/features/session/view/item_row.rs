@@ -12,7 +12,7 @@ use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{CORNER_TILE, SPACE};
+use crate::core::theme::metrics::{CORNER_TILE, SPACE, TEXT_COLUMN_WIDTH};
 
 use super::grow::chevron;
 use super::message_meta::MessageMeta;
@@ -28,9 +28,13 @@ use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::notices::Notice;
 use crate::features::session::model::turn_line::turn_line;
 
-/// The chat column's widest, centred in the pane (the reading measure). With its 16 px sides its content is the look's
-/// 704 px `.col` (metrics::TEXT_COLUMN_WIDTH).
-pub const CHAT_COLUMN: Pixels = px(736.);
+/// The chat column's sides.
+const CHAT_SIDE: Pixels = px(16.);
+
+/// The chat column's widest, centred in the pane (the reading measure): the look's 704 px `.col` and its 16 px sides.
+pub fn chat_column() -> Pixels {
+    TEXT_COLUMN_WIDTH + CHAT_SIDE * 2.
+}
 /// The error bar's alert and thinking's bulb.
 const ERROR_ICON: Pixels = px(16.);
 const THINKING_ICON: Pixels = px(14.);
@@ -210,9 +214,9 @@ impl RenderOnce for ItemRow {
         div()
             .group(group.clone())
             .w_full()
-            .max_w(CHAT_COLUMN)
+            .max_w(chat_column())
             .mx_auto()
-            .px_4()
+            .px(CHAT_SIDE)
             // The reading style, the mock's `.reply`: 13.5 px at 1.6; a line that sets its own size keeps the proportion.
             .text_size(chat_size)
             .line_height(chat_height)

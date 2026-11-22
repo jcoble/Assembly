@@ -6,10 +6,9 @@
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::{drawer as ids, drawer_pane, topbar};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement, PaneRef, PanelId};
+use gpui_kit::component::h_flex;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::*;
 
 use super::default_layout::{
@@ -18,9 +17,8 @@ use super::default_layout::{
 use super::terminal_toggle::menu_item;
 use crate::components::glass_button::glass_icon_button;
 use crate::components::icon_segments::{icon_segments, segment};
-
-const CONTROL: Pixels = px(28.);
-const GLYPH: Pixels = px(14.);
+use crate::components::quiet_button::quiet_icon_button;
+use crate::core::theme::metrics::DRAWER_HEADER_HEIGHT;
 
 /// The overflow tool in the capsule. Memory only, as the old app kept it: after a relaunch it follows the shown pane.
 #[derive(Default)]
@@ -107,12 +105,8 @@ impl RenderOnce for DrawerButtons {
         });
         let capsule = icon_segments("drawer-panes", cx).children(tabs);
         let dock = self.dock.clone();
-        let menu = Button::new("drawer-overflow")
+        let menu = quiet_icon_button("drawer-overflow", IconName::Ellipsis, cx)
             .control(ids::MORE_PANELS, "More panels")
-            .ghost()
-            .icon(Icon::new(IconName::Ellipsis).size(GLYPH))
-            .w(CONTROL)
-            .h(CONTROL)
             .tooltip("More panels")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
                 let menu =
@@ -134,12 +128,8 @@ impl RenderOnce for DrawerButtons {
                 menu.separator().item(menu_item(dock.clone(), cx))
             });
         let dock = self.dock.clone();
-        let close = Button::new("drawer-close")
+        let close = quiet_icon_button("drawer-close", IconName::X, cx)
             .control(ids::CLOSE, "Close side panel")
-            .ghost()
-            .icon(Icon::new(IconName::X).size(GLYPH))
-            .w(CONTROL)
-            .h(CONTROL)
             .tooltip("Close side panel")
             .on_click(move |_, window, cx| {
                 cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
@@ -148,7 +138,7 @@ impl RenderOnce for DrawerButtons {
                 })
             });
         h_flex()
-            .h(px(44.))
+            .h(DRAWER_HEADER_HEIGHT)
             .px_2()
             .gap_1()
             .child(capsule)

@@ -567,6 +567,7 @@ pub struct TopBarCounts {
 }
 
 impl TopBarCounts {
+    /// Reads both counts from the engine's shared rows, the same rows the Board lists.
     pub fn read(feed: &EngineFeed) -> Self {
         let data = BoardData::read(feed);
         Self {

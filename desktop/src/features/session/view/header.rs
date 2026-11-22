@@ -5,8 +5,9 @@
 //! Built from the kit's Button, Tag and Icon. It follows the `sessions` topic keyed on the open session. Replaces
 //! SessionHeader.svelte.
 
+use crate::components::quiet_button::quiet_icon_button;
 use crate::core::theme::look::Look;
-use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_PILL, CRUMB_HEIGHT, SPACE};
+use crate::core::theme::metrics::{CRUMB_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::chat as ids;
@@ -104,15 +105,9 @@ impl Render for Header {
         let look = Look::of(cx);
         // The look's crumb: a 32px ghost button that shows and hides the sessions column, in text-3.
         let sessions = div().debug_selector(|| "toggle-sessions".into()).child(
-            Button::new("toggle-sessions")
+            quiet_icon_button("toggle-sessions", IconName::PanelLeft, cx)
                 .control(ids::SESSIONS_TOGGLE, "Show or hide the sessions column")
-                .ghost()
-                .size(BUTTON_HEIGHT)
-                .px_0()
-                .rounded(CORNER_PILL)
-                .text_color(look.text_3)
                 .tooltip("Sessions")
-                .child(Icon::new(IconName::PanelLeft).size(CRUMB_ICON))
                 .on_click(|_, window, cx| {
                     if let Some(dock) = CenterPanes::dock(cx) {
                         dock.update(cx, |dock, cx| {
