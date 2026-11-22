@@ -41,6 +41,10 @@ ids! {
         MORE_PANELS = "drawer.more-panels",
         CLOSE = "drawer.close",
     }
+    chat {
+        SESSIONS_TOGGLE = "chat.sessions-toggle",
+        PARENT_SESSION = "chat.parent-session",
+    }
     sessions {
         SEARCH = "sessions.search",
         VIEW_OPTIONS = "sessions.view-options",

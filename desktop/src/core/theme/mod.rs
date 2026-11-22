@@ -1,12 +1,15 @@
 //! The window's theme: which kit theme file is in force, the glass window background, and the fade between themes.
 //! Replaces mac-command-bar's settings/themes/themeService.ts and the roster half of themeRegistry.ts. The colours
-//! live in desktop/themes/.
+//! live in desktop/themes/; views read them by the rule sheet's names through `look::Look`, and the look's sizes and
+//! corners from `metrics`.
 
 pub mod apply;
 #[cfg(test)]
 pub mod copied_themes;
 pub mod fade;
 pub mod grow;
+pub mod look;
+pub mod metrics;
 #[cfg(test)]
 mod redraw_tests;
 pub mod text;

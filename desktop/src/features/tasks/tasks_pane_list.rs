@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
+use crate::core::theme::metrics::SPACE;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption};
 use crate::features::tasks::task_export::*;
@@ -341,7 +342,15 @@ impl TasksPane {
             .child(header)
             .when(
                 !self.state.statuses.is_empty() || !self.state.priorities.is_empty(),
-                |column| column.child(div().flex_none().px_2().pb_2().child(self.pills.clone())),
+                |column| {
+                    column.child(
+                        div()
+                            .flex_none()
+                            .px(SPACE[8])
+                            .pb(SPACE[7])
+                            .child(self.pills.clone()),
+                    )
+                },
             )
             .when(self.state.show_setup(), |column| {
                 column.child(div().flex_none().px_2().pb_2().child(self.setup.clone()))

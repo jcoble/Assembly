@@ -6,13 +6,21 @@
 //! each change (`FilterPillsChanged`), reads the picks from `state`, and saves them if it wants to. The old app's
 //! ten-second idle close is dropped: the window keeps no timers.
 
+use crate::components::chip_button::chip_button;
+use crate::core::theme::metrics::{CHIP_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use crate::core::ui::access::ExposedElement as _;
+use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids::{filter_back, filter_clear, filter_group, filter_value};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+/// A filter's chip: its chevron after the words, 5 from them, with 9 after it (the mockup's `.chip`).
+const CHIP_GAP: Pixels = px(5.);
+const CHIP_PADDING_RIGHT: Pixels = px(9.);
+/// The chevron and the clear x.
+const CHIP_ICON: Pixels = px(13.);
 
 pub struct FilterOption {
     pub value: String,
@@ -120,30 +128,13 @@ impl FilterPills {
     }
 }
 
-/// A 26 px round pill: the theme's light primary at medium weight when picked, its secondary fill with muted text
-/// otherwise.
-fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let (fill, hover, text) = match picked {
-        true => (theme.primary, theme.primary_hover, theme.primary_foreground),
-        false => (
-            theme.secondary,
-            theme.secondary_hover,
-            theme.muted_foreground,
-        ),
-    };
+/// A chip's words and any chevron after them, 5 apart, in Meta, at medium weight when picked.
+fn words(words: impl Into<SharedString>, picked: bool, cx: &App) -> Div {
     h_flex()
-        .id(id)
-        .flex_none()
-        .h(px(26.))
-        .px(px(12.))
-        .rounded(px(999.))
+        .gap(CHIP_GAP)
         .text_role(TextRole::Meta, cx)
-        .bg(fill)
-        .text_color(text)
-        .when(picked, |pill| pill.font_weight(FontWeight::MEDIUM))
-        .cursor_pointer()
-        .hover(move |pill| pill.bg(hover))
+        .when(picked, |words| words.font_weight(FontWeight::MEDIUM))
+        .child(words.into())
 }
 
 impl Render for FilterPills {
@@ -153,9 +144,7 @@ impl Render for FilterPills {
             .key_context("FilterPills")
             .track_focus(&self.focus)
             .flex_wrap()
-            .gap(px(6.))
-            .px(px(12.))
-            .pb(px(10.))
+            .gap(SPACE[2])
             .on_key_down(cx.listener(|pills, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && pills.state.open.is_some() {
                     pills.close(cx);
@@ -168,23 +157,26 @@ impl Render for FilterPills {
             }));
         let Some(open) = self.state.open else {
             let picked = (self.state.groups.iter()).any(|group| !group.picked.is_empty());
-            let clear = pill("filter-pills-clear", false, cx)
-                .exposed(Role::Button, filter_clear(self.area), "Clear filters")
-                .w(px(26.))
+            let clear = chip_button("filter-pills-clear", false, cx)
+                .control(filter_clear(self.area), "Clear filters")
+                .w(CHIP_HEIGHT)
                 .px_0()
-                .justify_center()
-                .child(Icon::new(IconName::X).size(px(14.)))
+                .child(Icon::new(IconName::X).size(CHIP_ICON))
                 .on_click(cx.listener(|pills, _, _, cx| pills.pick(Pills::clear, cx)));
             return row.when(picked, |row| row.child(clear)).children(
                 (self.state.groups.iter().enumerate()).map(|(at, group)| {
-                    let words = self.state.label(at);
-                    pill(("filter-group", at), !group.picked.is_empty(), cx)
-                        .exposed(
-                            Role::Button,
+                    let label = self.state.label(at);
+                    let picked = !group.picked.is_empty();
+                    chip_button(("filter-group", at), picked, cx)
+                        .control(
                             filter_group(self.area, &group.label),
-                            format!("{} filter: {words}", group.label),
+                            format!("{} filter: {label}", group.label),
                         )
-                        .child(words)
+                        .pr(CHIP_PADDING_RIGHT)
+                        .child(
+                            words(label, picked, cx)
+                                .child(Icon::new(IconName::ChevronDown).size(CHIP_ICON)),
+                        )
                         .on_click(cx.listener(move |pills, _, window, cx| {
                             window.focus(&pills.focus, cx);
                             pills.state.open(at);
@@ -194,21 +186,21 @@ impl Render for FilterPills {
             );
         };
         let group = &self.state.groups[open];
-        let back = pill("filter-back", false, cx)
-            .exposed(Role::Button, filter_back(self.area), "Back to the filters")
-            .child("← Back")
+        let back = chip_button("filter-back", false, cx)
+            .control(filter_back(self.area), "Back to the filters")
+            .child(words("← Back", false, cx))
             .on_click(cx.listener(|pills, _, _, cx| pills.close(cx)));
         row.child(back)
             .children(group.options.iter().enumerate().map(|(at, option)| {
                 let value = option.value.clone();
                 let picked = group.picked.contains(&option.value);
-                pill(("filter-value", at), picked, cx)
-                    .toggle_in_tree(
+                chip_button(("filter-value", at), picked, cx)
+                    .control(
                         filter_value(self.area, &group.label, &option.value),
                         option.label.clone(),
-                        picked,
                     )
-                    .child(option.label.clone())
+                    .toggled(picked)
+                    .child(words(option.label.clone(), picked, cx))
                     .on_click(cx.listener(move |pills, _, _, cx| {
                         pills.pick(|state| state.toggle(open, &value), cx)
                     }))

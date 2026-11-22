@@ -99,7 +99,8 @@ impl BoardPanel {
         self.show_tab(BoardTab::Workflows, cx);
     }
 
-    pub(super) fn show_tab(&mut self, tab: BoardTab, cx: &mut Context<Self>) {
+    /// Shows one of the panel's tabs, keeping where the last one was scrolled to.
+    pub fn show_tab(&mut self, tab: BoardTab, cx: &mut Context<Self>) {
         if self.tab != tab {
             self.memory
                 .scroll

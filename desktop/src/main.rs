@@ -6,6 +6,18 @@
 mod activity;
 mod core;
 mod features;
+mod components {
+    #[path = "chip_button.rs"]
+    pub mod chip_button;
+    #[path = "glass_button.rs"]
+    pub mod glass_button;
+    #[path = "icon_segments.rs"]
+    pub mod icon_segments;
+    #[path = "picker_pill.rs"]
+    pub mod picker_pill;
+    #[path = "quiet_button.rs"]
+    pub mod quiet_button;
+}
 #[path = "components/hinted_item/mod.rs"]
 mod hinted_item;
 #[allow(dead_code)]
@@ -99,13 +111,7 @@ fn main() {
             let Some((read_layout, write_layout)) = layout.take() else {
                 return;
             };
-            let options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Assembly".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
+            let options = features::shell::top_bar::window_options();
             gpui_kit::open_window(options, cx, |window, cx| {
                 theme::set(ThemeId::DEFAULT, window, cx);
                 features::workspaces::drafts_guard::guard_close(window, cx);

@@ -3,6 +3,7 @@
 //! markup in routes/+page.svelte. Panes are empty placeholders until the lanes that own them register real ones.
 
 pub mod default_layout;
+mod drag_chip;
 mod drawer_buttons;
 pub mod frame;
 pub mod layout_store;

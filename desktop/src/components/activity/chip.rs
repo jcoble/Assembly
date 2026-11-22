@@ -1,4 +1,5 @@
 //! A status in its colour, and a link that looks like one of its neighbours.
+use crate::core::theme::metrics::TINT;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::ExposedElement as _;
 use gpui_kit::assets::IconName;
@@ -61,7 +62,7 @@ impl StatusChip {
 impl RenderOnce for StatusChip {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = self.tone.color(cx);
-        let tag = Tag::custom(color.opacity(0.12), color, color.opacity(0.24))
+        let tag = Tag::custom(color.opacity(TINT), color, color.opacity(0.24))
             .small()
             .text_role(TextRole::Meta, cx)
             .child(self.label.clone());
@@ -108,7 +109,7 @@ fn dot_chip_look<E: Styled + ParentElement>(root: E, chip: &DotChip, cx: &App) -
         .px(px(7.))
         .gap(px(4.))
         .rounded_full()
-        .bg(color.opacity(0.12))
+        .bg(color.opacity(TINT))
         .text_role(TextRole::Meta, cx)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(color)

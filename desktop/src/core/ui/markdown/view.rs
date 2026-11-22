@@ -12,7 +12,13 @@ use gpui_kit::*;
 use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::socket::row_source::ExpectedRowSource;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, SPACE};
 use crate::core::ui::markdown::payload::{Block, Inline};
+
+/// The code card's head and the room under its last line, the look's `.code`.
+const CODE_HEAD_HEIGHT: Pixels = px(31.);
+const CODE_PADDING_BOTTOM: Pixels = px(9.);
 
 #[derive(IntoElement)]
 pub struct MarkdownView {
@@ -198,15 +204,42 @@ impl Draw<'_> {
                 )
                 .child(self.text(parts))
                 .into_any_element(),
-            Block::Code { value, .. } => div()
-                .p_2()
-                .rounded(theme.radius)
-                .bg(theme.muted)
-                .font_family(theme.mono_font_family.clone())
-                .text_role(TextRole::Meta, self.cx)
-                .overflow_x_hidden()
-                .child(value.strip_suffix('\n').unwrap_or(value).to_string())
-                .into_any_element(),
+            // The look's code card: the inset fill under a hairline outline, the language on a 31px head over a
+            // hairline, then the code in mono, text-2.
+            Block::Code {
+                language, value, ..
+            } => {
+                let look = Look::of(self.cx);
+                v_flex()
+                    .rounded(CORNER_TILE)
+                    .bg(look.inset)
+                    .border_1()
+                    .border_color(look.hairline)
+                    .overflow_hidden()
+                    .text_role(TextRole::Meta, self.cx)
+                    .when(!language.is_empty(), |card| {
+                        card.child(
+                            h_flex()
+                                .h(CODE_HEAD_HEIGHT)
+                                .px(SPACE[5])
+                                .border_b_1()
+                                .border_color(look.hairline)
+                                .text_color(look.text_3)
+                                .child(language.clone()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .pt(SPACE[3])
+                            .pb(CODE_PADDING_BOTTOM)
+                            .px(SPACE[7])
+                            .font_family(theme.mono_font_family.clone())
+                            .text_color(look.text_2)
+                            .overflow_x_hidden()
+                            .child(value.strip_suffix('\n').unwrap_or(value).to_string()),
+                    )
+                    .into_any_element()
+            }
             Block::Quote { blocks } => {
                 let (border, muted) = (theme.border, theme.muted_foreground);
                 div()

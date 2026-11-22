@@ -1,9 +1,12 @@
-//! The pane's one hierarchy: the header, then either why there's nothing to show or a single scroller holding the commit
-//! box, what the last action came to, the three sections, the commits and the pull requests.
+//! The pane's one hierarchy: the header, then either why there's nothing to show or a single scroller holding the three
+//! sections, the commit box under them, the commits and the pull requests, with what's running and what the last action
+//! came to under the scroller.
 use super::SourceControlPane;
 use super::outcomes::running_label;
 use crate::core::state::session_read::Shown;
 use crate::core::state::viewed_project::ViewedProject;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{BUTTON_HEIGHT, CORNER_FIELD, CORNER_PILL, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::features::source_control::commit_box::{
     can_commit, commit_hint, commit_label, stage_hint, stageable,
@@ -13,6 +16,7 @@ use crate::features::source_control::result_line::result_line;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
+use gpui_kit::component::resizable::{HandleEdge, resize_handle};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
@@ -74,6 +78,8 @@ impl Render for SourceControlPane {
             .child(body)
     }
 }
+/// The commit box's height before it's dragged, the look's 78.
+const COMMIT_BOX_HEIGHT: Pixels = px(78.);
 /// The bounds a person can drag the commit box between.
 const COMMIT_BOX_HEIGHTS: (Pixels, Pixels) = (px(72.), px(320.));
 #[derive(Clone)]
@@ -104,12 +110,15 @@ impl SourceControlPane {
             Shown::Read(status) => self.repository_body(status, cx),
         }
     }
-    /// The kit's textarea with a grip under it, the kit having no drag to resize: it grows with its text until dragged.
+    /// The kit's textarea with the kit's resize handle on its bottom edge: it grows with its text until dragged.
     fn commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let height = self.commit_height;
         let read_only = self.read_only(cx);
+        let look = Look::of(cx);
         v_flex()
             .id("commit-box")
+            .relative()
+            .mt(SPACE[5])
             .debug_selector(|| "git-commit-box".into())
             .w_full()
             .on_drag_move(
@@ -120,18 +129,21 @@ impl SourceControlPane {
                     cx.notify();
                 }),
             )
+            // The look's `.msg`: the inset field with its line; the kit pads the text inside it by its size.
             .child(
                 Textarea::new(&self.message)
-                    .small()
                     .disabled(read_only)
+                    .min_h(COMMIT_BOX_HEIGHT)
+                    .rounded(CORNER_FIELD)
+                    .bg(look.inset)
+                    .border_color(look.line)
+                    .text_role(TextRole::Body, cx)
                     .when_some(height, |area, height| area.h(height)),
             )
+            // The kit's resize handle along the field's bottom edge: a drag sets the box's height.
             .child(
-                div()
-                    .id("commit-box-grip")
-                    .w_full()
-                    .h(px(6.))
-                    .cursor_row_resize()
+                resize_handle::<CommitBoxDrag, CommitBoxDrag>("commit-box-grip", Axis::Vertical)
+                    .inside(HandleEdge::Trailing)
                     .on_drag(CommitBoxDrag, |drag, _, _, cx| cx.new(|_| drag.clone())),
             )
     }
@@ -269,10 +281,11 @@ impl SourceControlPane {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .child(
+                        // The look's order: the changes, then the commit box under them, then the commits.
                         v_flex()
-                            .p_2()
+                            .px(SPACE[5])
+                            .pb(SPACE[5])
                             .gap_1()
-                            .children(change_area)
                             .children(status.more_line().map(|line| {
                                 div()
                                     .text_role(TextRole::Body, cx)
@@ -280,6 +293,7 @@ impl SourceControlPane {
                                     .child(line)
                             }))
                             .children(sections)
+                            .children(change_area)
                             .children(timeline)
                             .children(
                                 (ViewedProject::viewed(cx).is_some() && pull_requests.is_some())
@@ -305,54 +319,53 @@ impl SourceControlPane {
     fn commit_row(&mut self, status: &GitStatus, busy: bool, cx: &mut Context<Self>) -> Div {
         let message = self.message.read(cx).value().to_string();
         let can = can_commit(Some(status), &message, self.amend, busy);
+        // The look's `.cbtns`: two pill buttons sharing the row, Stage All outlined and Commit in the accent.
         let commit = Button::new("git-commit")
-            .small()
+            .primary()
             .label(commit_label(self.amend))
-            .rounded(px(999.))
+            .rounded(CORNER_PILL)
+            .h(BUTTON_HEIGHT)
             .flex_1()
             .tooltip(commit_hint(Some(status), &message, self.amend, busy))
             .disabled(!can)
             .on_click(cx.listener(|pane, _, window, cx| pane.commit(window, cx)));
-        let commit = if can {
-            commit.primary()
-        } else {
-            commit.secondary()
-        };
-        h_flex()
-            .gap_1()
+        let stage_all = Button::new("git-stage-all")
+            .outline()
+            .label("Stage All")
+            .rounded(CORNER_PILL)
+            .h(BUTTON_HEIGHT)
+            .flex_1()
+            .tooltip(stage_hint(Some(status), busy))
+            .disabled(busy || stageable(status).is_empty())
+            .on_click(cx.listener(|pane, _, _, cx| pane.stage_all(cx)));
+        v_flex()
+            .gap(SPACE[3])
             .child(
-                Switch::new("git-amend")
-                    .small()
-                    .label("Amend")
-                    .checked(self.amend)
-                    .disabled(self.read_only(cx))
-                    .tooltip(AMEND_TIP)
-                    .on_click(cx.listener(|pane, checked: &bool, _, cx| {
-                        pane.amend = *checked;
-                        cx.notify();
-                    })),
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Switch::new("git-amend")
+                            .small()
+                            .label("Amend")
+                            .checked(self.amend)
+                            .disabled(self.read_only(cx))
+                            .tooltip(AMEND_TIP)
+                            .on_click(cx.listener(|pane, checked: &bool, _, cx| {
+                                pane.amend = *checked;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("git-draft")
+                            .ghost()
+                            .compact()
+                            .label("Draft")
+                            .tooltip("Draft a commit message")
+                            .disabled(busy)
+                            .on_click(cx.listener(|pane, _, _, cx| pane.draft_message(cx))),
+                    ),
             )
-            .child(
-                Button::new("git-draft")
-                    .ghost()
-                    .compact()
-                    .label("Draft")
-                    .tooltip("Draft a commit message")
-                    .disabled(busy)
-                    .on_click(cx.listener(|pane, _, _, cx| pane.draft_message(cx))),
-            )
-            .child(
-                Button::new("git-stage-all")
-                    .secondary()
-                    .small()
-                    .label("Stage All")
-                    .rounded(px(999.))
-                    .flex_1()
-                    .tooltip(stage_hint(Some(status), busy))
-                    .disabled(busy || stageable(status).is_empty())
-                    .on_click(cx.listener(|pane, _, _, cx| pane.stage_all(cx))),
-            )
-            .child(commit)
+            .child(h_flex().gap(SPACE[3]).child(stage_all).child(commit))
     }
     fn running_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let muted = cx.theme().muted_foreground;

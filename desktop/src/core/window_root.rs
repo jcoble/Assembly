@@ -1,16 +1,17 @@
 //! `WindowRoot` owns the window's content view (the kit's `Root` wraps it, for dialogs and sheets), and draws
 //! `NativeViews::placer` once over it, so native views are placed once a frame after everything has laid out. On top
 //! goes the fade from the old theme after a switch (theme/fade.rs). It puts the theme and faces Settings saved in
-//! force from the start, and as they change.
+//! force from the start, and as they change, and re-reads the look's own tokens (theme/look.rs) when the kit reloads
+//! the theme folder.
 
 use super::intents::reveal_file_folder::RevealFileFolder;
 use crate::features::files::files_pane::FilesPane;
-use gpui_kit::component::Theme;
+use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::*;
 
 use super::native_views::views::NativeViews;
 use super::state::preferences::Preferences;
-use super::theme::{self, theme_id::ThemeId};
+use super::theme::{self, look::OwnKeys, theme_id::ThemeId};
 
 pub struct WindowRoot {
     content: AnyView,
@@ -20,6 +21,9 @@ pub struct WindowRoot {
     /// A theme file sets its own sizes, and the kit's folder watch re-applies one when it changes, so what Settings
     /// saved goes back on after any change to the theme. `apply_text` writes only a difference, so this settles.
     _theme: Subscription,
+    /// The kit re-reads the theme folder when a file in it changes and re-applies its own keys; the `assembly`
+    /// section is the app's, so it's re-read here.
+    _theme_files: Subscription,
 }
 
 impl WindowRoot {
@@ -30,11 +34,14 @@ impl WindowRoot {
             })
         });
         let _theme = cx.observe_global_in::<Theme>(window, |_, _, cx| theme::apply_text(cx));
+        let _theme_files =
+            cx.observe_global_in::<ThemeRegistry>(window, |_, _, cx| OwnKeys::reload(cx));
         let mut root = Self {
             content: content.into(),
             theme: ThemeId::DEFAULT,
             _preferences,
             _theme,
+            _theme_files,
         };
         // What arrived before the window was made.
         root.follow_preferences(window, cx);

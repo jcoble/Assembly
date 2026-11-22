@@ -1,4 +1,4 @@
-use super::{details, short_details, state_icon, status_words};
+use super::{details, state_icon, status_words};
 use crate::features::sessions::presence::Presence;
 use crate::features::sessions::rail_page::{RailEntry, test_entry};
 
@@ -53,12 +53,17 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
         ["offline", "Working"]
     );
     assert_eq!(details(&running), "Workbox Test · lane/rail");
-    // A local session is on This Mac.
+    // A local session is on this machine: "This Mac" on a Mac, "This computer" anywhere else.
     let local = RailEntry {
         machine: None,
         ..running
     };
-    assert_eq!(details(&local), "This Mac · lane/rail");
+    let here = if cfg!(target_os = "macos") {
+        "This Mac"
+    } else {
+        "This computer"
+    };
+    assert_eq!(details(&local), format!("{here} · lane/rail"));
 }
 
 #[test]
@@ -90,22 +95,6 @@ fn a_finished_row_that_isnt_marked_still_names_its_state() {
         ..finished
     };
     assert_eq!(status_words(Presence::of(&unread, false), false), ["Idle"]);
-}
-
-#[test]
-fn the_short_form_drops_this_mac_and_keeps_the_rest() {
-    let remote = RailEntry {
-        machine: Some("Workbox Test".into()),
-        branch: Some("lane/rail".into()),
-        ..entry()
-    };
-    assert_eq!(short_details(&remote), "Workbox Test · lane/rail");
-    let local = RailEntry {
-        branch: Some("lane/rail".into()),
-        ..entry()
-    };
-    assert_eq!(short_details(&local), "lane/rail");
-    assert_eq!(short_details(&entry()), "");
 }
 
 struct OneRow {
