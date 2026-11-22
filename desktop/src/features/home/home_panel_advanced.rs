@@ -248,6 +248,9 @@ impl HomePanel {
                 _ => typed,
             }
         });
+        // What each field held when this save was sent: the reply rewrites only a field that
+        // still holds exactly this, so typing during the save is never discarded.
+        let sent: [Option<String>; 2] = std::array::from_fn(|index| value(index));
         let args = json!({
             "machine": engine_machine,
             "provider": provider,
@@ -290,10 +293,20 @@ impl HomePanel {
                                     reply.settings.binary_path.clone().unwrap_or_default(),
                                     reply.settings.config_home.clone().unwrap_or_default(),
                                 ];
-                                for (field, value) in fields.iter().zip(values) {
-                                    field.update(cx, |field, cx| {
-                                        field.set_value(value, window, cx)
-                                    });
+                                for (index, (field, value)) in
+                                    fields.iter().zip(values).enumerate()
+                                {
+                                    // A field edited while the save was in flight keeps the
+                                    // person's text; against the landed mark it reads as
+                                    // changed, so the next save sends it as their edit.
+                                    let now = field.read(cx).value().to_string();
+                                    let now = now.trim();
+                                    let now = (!now.is_empty()).then(|| now.to_string());
+                                    if now == sent[index] {
+                                        field.update(cx, |field, cx| {
+                                            field.set_value(value, window, cx)
+                                        });
+                                    }
                                 }
                             }
                             edit.loaded = Some(reply.settings);
