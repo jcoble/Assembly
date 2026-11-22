@@ -9,6 +9,7 @@
 //! what's typed meanwhile in the next, in order (terminal#2). The backend routes remote sessions to their machine (terminal#12).
 //! What it does as the connection and the shell change, and what it says about them, is in terminal_pane_state.rs.
 
+use crate::core::theme::metrics::SPACE;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::mem;
 use std::time::Duration;
@@ -496,10 +497,11 @@ impl Render for TerminalPane {
             .child(self.input_handler(cx))
             .when(self.selecting, |pane| pane.child(self.drag_listeners(cx)))
             .when(self.bar_pressed, |pane| pane.child(self.bar_listeners(cx)));
+        // A line of words over or under the grid: what is happening, or why there is no shell.
         let note = |text: SharedString| {
             h_flex()
-                .gap_1()
-                .p_2()
+                .gap(SPACE[1])
+                .p(SPACE[3])
                 .text_color(color)
                 .when(spinning, |note| {
                     note.child(Spinner::new().xsmall().color(muted))
@@ -537,7 +539,7 @@ impl Render for TerminalPane {
                 let over = opening || self.link.is_none();
                 let grid = div().relative().size_full().child(grid);
                 let grid = grid.children(self.scrollbar(cx));
-                let grid = div().relative().flex_1().min_h_0().p_1().child(grid);
+                let grid = div().relative().flex_1().min_h_0().p(SPACE[1]).child(grid);
                 match status {
                     Some(status) if over => {
                         pane.child(grid.child(note(status.into()).absolute().top_0().left_0()))
