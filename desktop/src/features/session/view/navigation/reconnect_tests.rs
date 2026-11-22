@@ -242,6 +242,48 @@ async fn a_read_refused_on_a_returning_machine_reopens_the_session_with_no_error
     );
 }
 
+// A copied remote session's rows never refuse while its machine is away, so the composer's own config read is the
+// first live call to hear it. That refusal must reach the pane like a refused row stream does, or nothing reopens
+// the session when the machine answers and Send stays off behind a cleared offline line (TSK-1692 window check).
+#[gpui::test]
+async fn a_config_read_refused_while_its_machine_is_away_reopens_the_open_session_by_itself(
+    cx: &mut TestAppContext,
+) {
+    let (mut nav, cx) = on_a_remote_session(cx).await;
+    let composer = nav.pane.read_with(cx, |pane, _| pane.composer.clone());
+    composer.update_in(cx, |composer, window, cx| {
+        composer.type_text("still here", window, cx)
+    });
+    let before = opens(&nav);
+    let warms = nav
+        .calls()
+        .iter()
+        .filter(|call| call["method"] == "warm")
+        .count();
+    nav.forget_results();
+    nav.refuse_next_config();
+    // The machine goes away: the composer hears it and reads the config again, which the backend refuses.
+    composer.update(cx, |composer, cx| {
+        composer.set_offline(Some("lane".into()), cx)
+    });
+    // The session reopens by itself, and its composer warms again, which only an operational, online composer does:
+    // the same gate that enables Send. The typed draft is still in the box and no error is left behind.
+    nav.calls_at_least("open_target", before + 1).await;
+    nav.opened("a", cx).await;
+    nav.calls_at_least("warm", warms + 1).await;
+    cx.run_until_parked();
+    assert_eq!(
+        nav.pane
+            .read_with(cx, |pane, _| pane.status.clone())
+            .as_ref(),
+        ""
+    );
+    let text = composer.update_in(cx, |composer, window, cx| {
+        composer.draft_state(window, cx).0
+    });
+    assert_eq!(text, "still here");
+}
+
 #[gpui::test]
 async fn an_answer_refused_on_a_returning_machine_says_so_plainly_and_reopens_the_session(
     cx: &mut TestAppContext,

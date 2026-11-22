@@ -176,6 +176,9 @@ internal sealed partial class SourceControlFeature
         var matches = db.Query("SELECT machine,generation FROM engine_mirror WHERE name=$name AND state='live' LIMIT 2",
             row => new ExpectedSource(row.Text(0), row.Long(1), name), ct, new SqlArg("$name", name));
         if (matches.Count != 1 || expected is not null && matches[0] != expected) throw new CallFailed("The session's owning machine changed.", "source_changed");
+        // The mirror still names this source; the machine just isn't connected. Say so, so the drawer can offer
+        // Connect instead of showing a moved source (a copied session now opens while its machine is away).
+        if (connections!.ByName(name) is null) throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
         var source = await connections!.CaptureSessionOpenSourceAsync(db, matches[0], ct);
         var owner = await connections.CaptureProjectOwnerAsync(name, ct);
         if (owner.Engine != matches[0].Machine || !ReferenceEquals(owner.Machine, source.Machine) ||

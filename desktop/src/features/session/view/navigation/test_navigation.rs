@@ -41,6 +41,7 @@ struct Server {
     operational: bool,
     owner: Option<String>,
     fail_warm: bool,
+    refuse_config: bool,
     start_displays: HashMap<String, Value>,
     start_reply: Option<Value>,
     engine_subscriptions: Vec<Value>,
@@ -209,6 +210,13 @@ impl NavigationFixture {
                         .insert(key, (revision + 1, args["snapshot"].clone()));
                     vec![result(json!({"revision":revision+1}))]
                 }
+                (Some("call"), Some("config"), Some("get"), _)
+                    if std::mem::take(&mut state.refuse_config) =>
+                {
+                    vec![Reply::Frame(
+                        json!({"t":"error","id":id,"code":"source_changed","message":"The selected row source changed."}),
+                    )]
+                }
                 (Some("call"), Some("config"), Some("warm"), _)
                     if std::mem::take(&mut state.fail_warm) =>
                 {
@@ -366,6 +374,10 @@ impl NavigationFixture {
     }
     pub fn fail_next_warm(&self) {
         self.state.lock().unwrap().fail_warm = true;
+    }
+    /// The next config read answers as a live call on a machine that isn't answering does: source_changed.
+    pub fn refuse_next_config(&self) {
+        self.state.lock().unwrap().refuse_config = true;
     }
     pub fn operational(&self) {
         self.state.lock().unwrap().operational = true;

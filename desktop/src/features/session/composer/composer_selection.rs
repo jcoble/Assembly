@@ -253,6 +253,9 @@ impl Composer {
         }
         args
     }
+    /// A live call (the config read, a warm, a send) refused because the source moved. That is the pane's to
+    /// reopen, as with a refused row stream: invalidating here alone would leave the composer off with nobody
+    /// told to bring it back when the machine answers.
     pub(super) fn source_refused(
         &mut self,
         error: &crate::features::session::client::session_client::CallError,
@@ -260,7 +263,7 @@ impl Composer {
     ) {
         if matches!(error,crate::features::session::client::session_client::CallError::Refused{code,..} if code=="source_changed")
         {
-            self.invalidate_source(cx);
+            self.source_lost(cx);
         }
     }
     pub(super) fn operational(&self) -> bool {
