@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Agents;
 using Assembly.Domain.Events;
 
 namespace Assembly.Application.Common.Acp.V2;
@@ -9,7 +10,7 @@ namespace Assembly.Application.Common.Acp.V2;
 /// <summary>
 /// ACP v2 upserts, chunks and foreground snapshots to domain events.
 /// </summary>
-public sealed class UpdateReader
+public sealed class UpdateReader(ContextLimitPolicy? contextLimit = null)
 {
     private readonly Dictionary<string, ToolCallFields> _tools = [];
     private readonly Dictionary<string, List<JsonElement>> _toolContent = [];
@@ -17,9 +18,21 @@ public sealed class UpdateReader
     private readonly Dictionary<string, IReadOnlyList<PlanEntry>> _plans = [];
     private readonly Dictionary<string, SubagentChanged> _subagents = [];
     private readonly Dictionary<string, ProviderSessionMessage> _providerMessages = [];
+    private ContextLimitPolicy? _contextLimit = contextLimit;
+    private long? _observedContextSize;
+    private string? _observedContextModel;
     private bool _running;
     private bool _idle;
     private string? _lastStop;
+
+    /// <summary>Updates the effective context limit policy when a session resumes with refreshed provider settings.</summary>
+    public void SetContextLimit(ContextLimitPolicy? contextLimit)
+    {
+        if (contextLimit == _contextLimit) return;
+        _contextLimit = contextLimit;
+        _observedContextSize = null;
+        _observedContextModel = null;
+    }
 
     /// <summary>Applies updates in arrival order; one reader belongs to one provider session.</summary>
     public IReadOnlyList<AgentEvent> Read(SessionNotification notification, long? timestamp = null)
@@ -174,7 +187,7 @@ public sealed class UpdateReader
                         events.Add(new TurnEnded(at, reason, state.ReportedUsage is { } usage
                             ? new TokenUsage(usage.InputTokens, usage.OutputTokens, usage.CachedReadTokens, usage.CachedWriteTokens, usage.TotalTokens) : null));
                     if (state.ReportedUsage is { } report)
-                        events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size, report.InputTokens, report.OutputTokens));
+                        events.Add(NormalizeUsage(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size, report.InputTokens, report.OutputTokens)));
                 }
                 else if (state.State == "unknown")
                 {
@@ -186,7 +199,7 @@ public sealed class UpdateReader
                 if (String(update, "steerId") is { Length: > 0 } steerId) events.Add(new SteerInserted(at, steerId));
                 break;
             case "usage_update": // Also emitted by both adapters at protocol 2.
-                events.Add(Usage(update, at));
+                events.Add(NormalizeUsage(Usage(update, at)));
                 break;
             case "session_info_update":
                 if (String(update, "title") is { Length: > 0 } title) events.Add(new TitleChanged(at, title));
@@ -249,6 +262,37 @@ public sealed class UpdateReader
         if (update.TryGetProperty("_meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
             model = String(meta, "_claude/model");
         return new UsageReported(at, cost, model, Long(update, "used"), Long(update, "size"));
+    }
+
+    private UsageReported NormalizeUsage(UsageReported usage)
+    {
+        if (_contextLimit is not { } policy || usage.Size is not { } reportedSize || reportedSize <= 0)
+            return usage;
+
+        var effectiveSize = reportedSize;
+        if (policy.FixedLimit is > 0 && effectiveSize > policy.FixedLimit.Value)
+            effectiveSize = policy.FixedLimit.Value;
+
+        if (policy.NeverWiden)
+        {
+            if (_observedContextModel is not null && usage.Model is not null
+                && !string.Equals(_observedContextModel, usage.Model, StringComparison.Ordinal))
+            {
+                _observedContextSize = null;
+                _observedContextModel = usage.Model;
+            }
+            else if (_observedContextModel is null && usage.Model is not null)
+            {
+                _observedContextModel = usage.Model;
+            }
+
+            if (_observedContextSize is { } prior && effectiveSize > prior)
+                effectiveSize = prior;
+            else
+                _observedContextSize = effectiveSize;
+        }
+
+        return effectiveSize == reportedSize ? usage : usage with { Size = effectiveSize };
     }
 
     private static string? ChunkText(JsonElement update) =>

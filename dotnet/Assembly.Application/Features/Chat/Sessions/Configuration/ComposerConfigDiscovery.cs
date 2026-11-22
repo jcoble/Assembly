@@ -8,16 +8,199 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions.Configuration;
 
-/// <summary>A private, bounded metadata probe. Never owns an Assembly session or emits rows.</summary>
-public sealed class ComposerConfigDiscovery(IAgentLauncher launcher, TimeProvider time)
+/// <summary>A private, bounded metadata probe. Concurrent drafts share a probe for the same inputs.</summary>
+public sealed class ComposerConfigDiscovery(
+    IAgentLauncher launcher, TimeProvider time, SessionStore? store = null, TextWriter? log = null) : IAsyncDisposable
 {
     public static readonly TimeSpan Limit = TimeSpan.FromSeconds(15);
 
+    private readonly Lock _gate = new();
+    private readonly Dictionary<CacheKey, Flight> _flights = new();
+    private readonly HashSet<CacheKey> _checkedThisRun = [];
+    private bool _disposed;
+
+    private sealed record CacheKey(string Agent, string Target, string Cwd);
+    private sealed class Flight(string? revision, bool refresh)
+    {
+        public readonly string? Revision = revision;
+        public readonly bool Refresh = refresh;
+        public readonly CancellationTokenSource Stop = new();
+        public bool Stopping;
+        public Task<ComposerCatalogue?> Answer = null!;
+        public int Waiters;
+    }
+
     public async Task<ComposerCatalogue> DiscoverAsync(string agent, string targetId, string cwd, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(targetId)) throw new CallFailed("Select the agent configuration again.");
         launcher.ValidateFolder(cwd);
         var captured = ConfigTargetIdentity.Capture(launcher, agent, targetId);
+        var key = new CacheKey(agent, targetId, cwd);
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            Flight flight;
+            bool joining;
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                var revision = launcher.CatalogueRevision(captured.Descriptor, captured.Environment, cwd);
+                var known = revision is null ? null : LoadSaved(key, revision, ct);
+                if (!_flights.TryGetValue(key, out flight!))
+                {
+                    if (known is not null && !_checkedThisRun.Add(key)) return known;
+                    flight = new Flight(revision, known is not null);
+                    _flights.Add(key, flight);
+                    flight.Answer = RunProbeAsync(key, flight, captured);
+                }
+
+                joining = !flight.Stopping && flight.Revision == revision && (!flight.Refresh || known is not null);
+                if (joining)
+                {
+                    if (known is not null) return known;
+                    flight.Waiters++;
+                }
+                else if (flight.Revision != revision)
+                {
+                    Stop(flight);
+                }
+            }
+
+            if (!joining)
+            {
+                // A replaced or abandoned probe still owns its adapter until it has finished closing it.
+                await ObserveAsync(flight.Answer).WaitAsync(ct);
+                continue;
+            }
+
+            try
+            {
+                return (await flight.Answer.WaitAsync(ct))!;
+            }
+            finally
+            {
+                bool joinCleanup;
+                lock (_gate)
+                {
+                    flight.Waiters--;
+                    joinCleanup = flight.Waiters == 0 && !flight.Refresh && _flights.GetValueOrDefault(key) == flight;
+                    if (joinCleanup) Stop(flight);
+                }
+                if (joinCleanup) await ObserveAsync(flight.Answer);
+            }
+        }
+    }
+
+    private async Task<ComposerCatalogue?> RunProbeAsync(CacheKey key, Flight flight,
+        (AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId) captured)
+    {
+        // Yield so adapter startup can run independently of the draft that registered this flight.
+        await Task.Yield();
+        var ct = flight.Stop.Token;
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            var result = await ProbeAsync(captured, key.Cwd, ct);
+            var current = flight.Revision is null ? null : launcher.CatalogueRevision(captured.Descriptor, captured.Environment, key.Cwd);
+            lock (_gate)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (flight.Revision is { } revision)
+                {
+                    WriteSaved(key, revision, revision == current ? result : null);
+                    // A fresh cold answer already did the work of this run's warm refresh.
+                    if (store is not null && revision == current) _checkedThisRun.Add(key);
+                }
+                return result;
+            }
+        }
+        catch (Exception error) when (flight.Refresh && error is not OutOfMemoryException)
+        {
+            lock (_gate)
+            {
+                if (!flight.Stopping && flight.Revision is { } revision)
+                    WriteSaved(key, revision, null);
+            }
+            log?.WriteLine($"composer settings refresh for {key.Agent} failed: {error.GetType().Name}");
+            return null;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _flights.Remove(key);
+                flight.Stop.Dispose();
+            }
+        }
+    }
+
+    private void WriteSaved(CacheKey key, string revision, ComposerCatalogue? catalogue)
+    {
+        try
+        {
+            store?.SaveCatalogue(key.Agent, key.Target, key.Cwd, revision,
+                catalogue is null ? null : ComposerConfigJson.Json(catalogue.Config, catalogue.ModelOptions).GetRawText());
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            log?.WriteLine($"composer settings for {key.Agent} could not be saved: {error.GetType().Name}");
+        }
+    }
+
+    private ComposerCatalogue? LoadSaved(CacheKey key, string revision, CancellationToken ct)
+    {
+        if (store?.SavedCatalogue(key.Agent, key.Target, key.Cwd, revision, ct) is not { } saved) return null;
+        try { return ComposerConfigJson.ParseCatalogue(saved); }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or KeyNotFoundException) { return null; }
+    }
+
+    public void Invalidate(string agent)
+    {
+        lock (_gate)
+        {
+            foreach (var (key, flight) in _flights)
+                if (key.Agent == agent) Stop(flight);
+            store?.ClearCatalogues(agent);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Task[] probes;
+        lock (_gate)
+        {
+            _disposed = true;
+            probes = _flights.Values.Select(flight =>
+            {
+                Stop(flight);
+                return flight.Answer;
+            }).ToArray();
+        }
+        await Task.WhenAll(probes.Select(ObserveAsync));
+    }
+
+    private static void Stop(Flight flight)
+    {
+        if (flight.Stopping) return;
+        flight.Stopping = true;
+        flight.Stop.Cancel();
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try { await task; }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            // A waiter receives the outcome. A replacement or shutdown only joins cleanup.
+        }
+    }
+
+    private async Task<ComposerCatalogue> ProbeAsync(
+        (AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId) captured,
+        string cwd, CancellationToken ct)
+    {
         using var deadline = new CancellationTokenSource(Limit, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         var token = linked.Token;

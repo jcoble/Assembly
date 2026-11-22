@@ -82,6 +82,26 @@ internal sealed class Foreground : IDisposable
     }
 
     /// <summary>
+    /// Version 1: the prompt's reply ends its turn, as no idle update will. Any cancel waiting on the session is over
+    /// with it, whatever the stop reason, so a Stop that crossed the reply never hangs.
+    /// </summary>
+    public void EndFromReply(Pending pending, PromptResult result)
+    {
+        lock (_gate)
+        {
+            if (!_pending.Remove(pending)) return;
+            pending.Inserted.TrySetResult(result.MessageId);
+            pending.Ended.TrySetResult(result);
+            _messages.Remove(result.MessageId);
+            _cancelRequested = false;
+            foreach (var cancel in _cancels) cancel.TrySetResult();
+            _cancels.Clear();
+            Prune();
+        }
+        EndWorkIfIdle();
+    }
+
+    /// <summary>
     /// Reads one update in pipe order. A <c>state_update</c> that ends a boundary not ended before is published through
     /// <paramref name="publishEnded"/> when given; everything else through <paramref name="publishAccepted"/>.
     /// </summary>
