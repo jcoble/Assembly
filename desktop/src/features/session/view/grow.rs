@@ -10,11 +10,13 @@ use std::f32::consts::FRAC_PI_2;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::animation::cubic_bezier;
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
+use gpui_kit::component::{Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::theme::grow::GROW;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, SPACE};
 
 /// The design system's grow curve, `cubic-bezier(0.16, 1, 0.3, 1)`: from 0 to 1 as `t` goes from 0 to 1.
 pub fn ease(t: f32) -> f32 {
@@ -66,17 +68,20 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
 }
 
 /// An open question's card, coming in as it grows: shut, `row` keeps its place; open, the card is the column's width,
-/// as the mock's `.confirm`: 12 px corners, an edge, a shade lighter than the panel, its content 14 px in.
+/// as the look's `.q`: the question fill under the amber card line, tile corners, its content 18 px in.
 pub fn band(row: Div, grown: f32, cx: &App) -> Div {
-    let theme = cx.theme();
-    row.px(px(14.))
-        .py(px(6.) * grown)
-        .mx(px(-14.) * (1. - grown))
-        .rounded(px(12.))
+    let look = Look::of(cx);
+    row.px(QUESTION_PADDING_X)
+        .py(SPACE[5] * grown)
+        .mx(-QUESTION_PADDING_X * (1. - grown))
+        .rounded(CORNER_TILE)
         .border_1()
-        .border_color(theme.border.opacity(grown))
-        .bg(theme.group_box.opacity(0.5 * grown))
+        .border_color(look.needs_you_line_card.opacity(grown))
+        .bg(look.question.opacity(grown))
 }
+
+/// How far an open question's content sits in from its card's sides.
+const QUESTION_PADDING_X: Pixels = px(18.);
 
 /// `body` growing in place: while it moves, cut to `grown` of the height it was last measured at (0 before the first
 /// measure, which is where it grows from), and faded; still, it's drawn at its own height. Its height is measured on

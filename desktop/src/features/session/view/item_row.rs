@@ -6,11 +6,13 @@ use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::ExposedElement as _;
 use crate::core::ui::access::control_ids;
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, SPACE};
 
 use super::grow::chevron;
 use super::message_meta::MessageMeta;
@@ -26,9 +28,12 @@ use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::notices::Notice;
 use crate::features::session::model::turn_line::turn_line;
 
-/// The chat column's widest, centred in the pane (the reading measure); the composer keeps to it too. With its 16 px
-/// sides its content is the approved mock's 660 px `.col`.
-pub const CHAT_COLUMN: Pixels = px(692.);
+/// The chat column's widest, centred in the pane (the reading measure). With its 16 px sides its content is the look's
+/// 704 px `.col` (metrics::TEXT_COLUMN_WIDTH).
+pub const CHAT_COLUMN: Pixels = px(736.);
+/// The error bar's alert and thinking's bulb.
+const ERROR_ICON: Pixels = px(16.);
+const THINKING_ICON: Pixels = px(14.);
 
 #[derive(IntoElement)]
 pub struct ItemRow {
@@ -51,10 +56,10 @@ pub struct ItemRow {
 
 impl RenderOnce for ItemRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
+        let look = Look::of(cx);
         let (chat_size, chat_height) =
             Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let muted = look.text_3;
         let key = self.item.key.clone();
         // Each row its own hover group, so its copy button and time show only under the pointer.
         let group = SharedString::from(format!("{key}:meta"));
@@ -111,8 +116,8 @@ impl RenderOnce for ItemRow {
             ItemKind::Message { blocks, at, .. } => v_flex()
                 .pt(px(9.))
                 .gap_1()
-                // The mock's `.reply` colour, a shade brighter than the theme's text; on the reply only.
-                .child(div().text_color(rgb(0xe2e2e2)).child(MarkdownView {
+                // The reply in text-1.
+                .child(div().text_color(look.text_1).child(MarkdownView {
                     id: key.clone().into(),
                     blocks,
                     session: Some(self.session.clone()),
@@ -125,19 +130,50 @@ impl RenderOnce for ItemRow {
             }
             ItemKind::Error { message, code } => {
                 match Notice::of_error(&message, code.as_deref()) {
-                    Some(notice) => v_flex()
-                        .gap_1()
+                    // The look's error bar: a card with the problem line, its alert icon, the label in the
+                    // problem colour ahead of the message, and any hint under them in text-3.
+                    Some(notice) => h_flex()
+                        .items_start()
+                        .gap(SPACE[4])
+                        .py(SPACE[3])
+                        .pl(SPACE[6])
+                        .pr(SPACE[3])
+                        .rounded(CORNER_TILE)
+                        .border_1()
+                        .border_color(look.problem_line)
                         .text_role(TextRole::Body, cx)
                         .child(
-                            div()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(danger)
-                                .child(notice.label),
+                            Icon::new(Glyph::TriangleAlert)
+                                .size(ERROR_ICON)
+                                .flex_none()
+                                .mt(SPACE[0])
+                                .text_color(look.problem),
                         )
-                        .child(notice.message)
-                        .when_some(notice.hint, |column, hint| {
-                            column.child(div().text_color(muted).child(hint))
-                        })
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .child(
+                                    h_flex()
+                                        .flex_wrap()
+                                        .gap(SPACE[1])
+                                        .text_color(look.text_1)
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(look.problem)
+                                                .child(notice.label),
+                                        )
+                                        .child(notice.message),
+                                )
+                                .when_some(notice.hint, |column, hint| {
+                                    column.child(
+                                        div()
+                                            .text_role(TextRole::Meta, cx)
+                                            .text_color(muted)
+                                            .child(hint),
+                                    )
+                                }),
+                        )
                         .into_any_element(),
                     None => div().into_any_element(),
                 }
@@ -185,31 +221,30 @@ impl RenderOnce for ItemRow {
 }
 
 /// Thinking's line, as a tool line: a bulb, "Thinking" until it's done, then "Thought", and a chevron after it turned
-/// `grown` of the way; the bulb and chevron faint, as the mock's `.tl`.
+/// `grown` of the way, all in text-3 at Meta, as the look's `.thl`.
 pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
-    let muted = cx.theme().muted_foreground;
-    let faint = muted.opacity(0.65);
+    let faint = Look::of(cx).text_3;
     h_flex()
         .h(px(22.))
-        .gap_2()
-        .text_role(TextRole::Body, cx)
-        .text_color(muted)
-        .child(Icon::new(Glyph::Lightbulb).size(px(14.)).text_color(faint))
+        .gap(SPACE[2])
+        .text_role(TextRole::Meta, cx)
+        .text_color(faint)
+        .child(Icon::new(Glyph::Lightbulb).size(THINKING_ICON))
         .child(if done { "Thought" } else { "Thinking" })
-        .child(chevron(grown).text_color(faint))
+        .child(chevron(grown))
         .into_any_element()
 }
 
-/// What thinking shows open: its text, hanging from a rule under the title.
+/// What thinking shows open: its text in text-2, hanging from a 2px rule, as the look's `.th`.
 pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+    let look = Look::of(cx);
     div()
         .ml(px(7.))
-        .pl(px(15.))
-        .border_l_1()
-        .border_color(theme.border)
+        .pl(px(13.))
+        .border_l_2()
+        .border_color(look.hairline_strong)
         .text_role(TextRole::Body, cx)
-        .text_color(theme.muted_foreground)
+        .text_color(look.text_2)
         .child(text)
         .into_any_element()
 }

@@ -1,8 +1,11 @@
-//! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · ran 3 commands · edited 2 files", muted, with the
-//! chevron after it, opening and closing the work it folds. Replaces chat/TurnFold.svelte.
+//! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · ran 3 commands · edited 2 files" on a chip (the kit's
+//! Button through components/chip_button.rs), the chevron first, opening and closing the work it folds. Replaces chat/TurnFold.svelte.
 
+use crate::components::chip_button::chip_button;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::SPACE;
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::h_flex;
 use gpui_kit::*;
 
 use std::time::Instant;
@@ -11,6 +14,10 @@ use super::grow::{chevron, turn};
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::turn_line::worked_for;
+
+/// The heading's chip and its chevron, the look's `.wrow`.
+const FOLD_HEIGHT: Pixels = px(30.);
+const FOLD_ICON: Pixels = px(14.);
 
 #[derive(IntoElement)]
 pub struct TurnFoldRow {
@@ -43,22 +50,45 @@ pub fn heading(fold: &Fold) -> String {
 
 impl RenderOnce for TurnFoldRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = Look::of(cx);
         let run_id = self.fold.run_id.clone();
-        let chevron = chevron(turn(self.open, self.toggled_at, window, cx).0);
+        let chevron = chevron(turn(self.open, self.toggled_at, window, cx).0).size(FOLD_ICON);
         let on_action = self.on_action.clone();
-        h_flex()
-            .id(SharedString::from(format!("fold:{run_id}")))
-            .h(px(22.))
-            .gap_2()
-            .text_role(TextRole::Body, cx)
-            .text_color(cx.theme().muted_foreground)
-            .cursor_pointer()
+        // The heading's first part ("Worked for 42s") in text-2 at medium weight, the rest of it in text-3.
+        let heading = heading(&self.fold);
+        let (lead, rest) = match heading.split_once(" · ") {
+            Some((lead, rest)) => (lead.to_string(), Some(format!(" · {rest}"))),
+            None => (heading, None),
+        };
+        // The look's `.wrow`: a 30px chip at the start of the column, the chevron first. The row keeps it at its own
+        // width rather than the column's.
+        let chip = chip_button(SharedString::from(format!("fold:{run_id}")), false, cx)
+            .h(FOLD_HEIGHT)
+            .pl(SPACE[3])
+            .pr(SPACE[5])
+            .border_color(look.hairline_strong)
+            .text_color(look.text_3)
             .on_click(move |_, window, cx| {
                 let run_id = run_id.clone();
                 on_action(SessionAction::ToggleFold { run_id }, window, cx)
             })
-            .child(heading(&self.fold))
-            .child(chevron)
+            .child(
+                h_flex()
+                    .gap(SPACE[3])
+                    .text_role(TextRole::Body, cx)
+                    .child(chevron)
+                    .child(
+                        h_flex()
+                            .child(
+                                div()
+                                    .text_color(look.text_2)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(lead),
+                            )
+                            .children(rest),
+                    ),
+            );
+        h_flex().child(chip)
     }
 }
 
