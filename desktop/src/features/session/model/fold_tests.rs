@@ -358,3 +358,37 @@ fn a_turn_with_no_finished_reply_keeps_its_own_line() {
     assert!(!reply_done(&[tool("t", "execute", json!({})), unfinished]));
     assert!(reply_done(&[tool("t", "execute", json!({})), text("m")]));
 }
+
+#[test]
+fn a_cancelled_or_failed_edit_is_not_counted_as_completed_work() {
+    let ask = item(
+        "ask",
+        ItemKind::Ask {
+            ask_id: "1".into(),
+            ask: serde_json::from_value(json!({
+                "kind": "permission",
+                "state": "cancelled",
+                "toolCallId": "create",
+                "options": [{ "optionId": "allow", "name": "Allow", "kind": "allow_once" }]
+            }))
+            .unwrap(),
+        },
+    );
+    let cancelled = tool(
+        "create",
+        "edit",
+        json!({ "state": "cancelled", "path": "stop.txt" }),
+    );
+    let stopped_turn = [ask, cancelled];
+    assert_eq!(summary(&stopped_turn), "Worked");
+    let folds = Fold::all(&stopped_turn, &stats(), None);
+    assert!(folds["r1"].work.contains("create"));
+    assert_eq!(folds["r1"].summary, "Worked");
+
+    let failed = tool(
+        "bad-edit",
+        "edit",
+        json!({ "state": "failed", "path": "stop.txt" }),
+    );
+    assert_eq!(summary(&[failed]), "1 call failed");
+}
