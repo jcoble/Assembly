@@ -18,6 +18,7 @@ use super::settings_page::SettingsPage;
 use crate::core::socket::client::SocketClient;
 use crate::core::state::machine::Machine;
 use crate::core::state::machines::Machines;
+use crate::core::state::machines::THIS_MACHINE;
 use crate::core::ui::access::control_ids::{
     machine_button as machine_button_id, machine_line, settings as ids,
 };
@@ -87,7 +88,7 @@ impl SettingsPage {
             .child(
                 say(
                     machine_line(machine.name.as_deref().unwrap_or("local"), "name"),
-                    machine.name.clone().unwrap_or("This Mac".into()),
+                    machine.name.clone().unwrap_or(THIS_MACHINE.into()),
                 )
                 .text_role(TextRole::Body, cx)
                 .font_weight(FontWeight::SEMIBOLD)
