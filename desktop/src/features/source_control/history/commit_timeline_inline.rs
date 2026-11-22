@@ -5,6 +5,8 @@ use super::super::git_labels::{RefKind, commit_age, ref_pills, split_path};
 use super::super::section_heading::{CHIP_HEIGHT, heading_label};
 use super::{CommitFiles, CommitTimeline};
 use crate::core::intents::{open_commit_diff::OpenCommitDiff, open_file::OpenFile};
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_FIELD, GROUP_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Control as _;
 use crate::core::ui::access::control_ids as ids;
@@ -20,6 +22,8 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+/// The look's 11 between a commit's mark and its words.
+const ROW_GAP: Pixels = px(11.);
 const CURRENT_FILE_ELSEWHERE: &str = "Switch back to the session folder to open it.";
 const MERGE_HAS_NO_CHANGES: &str = "This is a merge, and a merge brings no changes of its own. Open the commits it brought in to see the work.";
 /// What an open commit says instead of a file list; every case ends in words.
@@ -135,9 +139,11 @@ impl CommitTimeline {
         };
         let complete = self.history.next_cursor.is_none();
         let count = self.history.commits.len();
+        // The look's `.dsec.rc`: the heading 14 below what's above it.
         let heading = h_flex()
-            .px_2()
-            .pt_2()
+            .h(GROUP_HEIGHT)
+            .mt(SPACE[1])
+            .px(SPACE[0])
             .gap_2()
             .child(heading_label(
                 "Commits",
@@ -206,7 +212,8 @@ impl CommitTimeline {
         let commit = self.history.commits[index].clone();
         let expanded = self.expanded.contains(&commit.sha);
         let theme = cx.theme();
-        let (muted, success, warning) = (theme.muted_foreground, theme.success, theme.warning);
+        let (success, warning) = (theme.success, theme.warning);
+        let look = Look::of(cx);
         let age = commit_age(&commit.committed_at);
         let byline = if age.is_empty() {
             commit.author.clone()
@@ -218,10 +225,14 @@ impl CommitTimeline {
         let menu_toggle = commit.sha.clone();
         let menu_copy = commit.sha.clone();
         let view = cx.entity().downgrade();
+        // The look's `.crow`: the chevron, then the subject in text-1 after any ref pills, and the byline under it in
+        // text-3.
         let row = ListItem::new(SharedString::from(format!("commit:{}", commit.sha)))
-            .py_0()
-            .min_h(px(28.))
+            .py(SPACE[2])
+            .px(SPACE[2])
+            .rounded(CORNER_FIELD)
             .text_role(TextRole::Body, cx)
+            .text_color(look.text_1)
             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             .on_click(
                 cx.listener(move |timeline, _, _, cx| timeline.toggle_commit(toggled.clone(), cx)),
@@ -230,7 +241,8 @@ impl CommitTimeline {
                 h_flex()
                     .w_full()
                     .min_w_0()
-                    .gap_1()
+                    .items_start()
+                    .gap(ROW_GAP)
                     .child(
                         Icon::new(if expanded {
                             IconName::ChevronDown
@@ -238,44 +250,61 @@ impl CommitTimeline {
                             IconName::ChevronRight
                         })
                         .size(px(14.))
-                        .text_color(muted),
-                    )
-                    .children(
-                        ref_pills(&commit.refs)
-                            .into_iter()
-                            .filter(|pill| pill.kind != RefKind::Remote)
-                            .map(|pill| {
-                                let tint = |color: Hsla| {
-                                    Tag::custom(color.opacity(0.12), color, color.opacity(0.))
-                                };
-                                let tag = match pill.kind {
-                                    RefKind::Head => tint(success),
-                                    RefKind::Tag => tint(warning),
-                                    RefKind::Branch | RefKind::Remote => Tag::secondary(),
-                                };
-                                tag.small()
-                                    .h(CHIP_HEIGHT)
-                                    .text_role(TextRole::Body, cx)
-                                    .rounded_full()
-                                    .max_w(relative(0.4))
-                                    .truncate()
-                                    .child(pill.label)
-                            }),
+                        .flex_none()
+                        .mt(SPACE[1])
+                        .text_color(look.text_3),
                     )
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .text_role(TextRole::Body, cx)
-                            .child(commit.subject.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_role(TextRole::Body, cx)
-                            .text_color(muted)
-                            .child(byline),
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .children(
+                                        ref_pills(&commit.refs)
+                                            .into_iter()
+                                            .filter(|pill| pill.kind != RefKind::Remote)
+                                            .map(|pill| {
+                                                let tint = |color: Hsla| {
+                                                    Tag::custom(
+                                                        color.opacity(0.12),
+                                                        color,
+                                                        color.opacity(0.),
+                                                    )
+                                                };
+                                                let tag = match pill.kind {
+                                                    RefKind::Head => tint(success),
+                                                    RefKind::Tag => tint(warning),
+                                                    RefKind::Branch | RefKind::Remote => {
+                                                        Tag::secondary()
+                                                    }
+                                                };
+                                                tag.small()
+                                                    .h(CHIP_HEIGHT)
+                                                    .text_role(TextRole::Meta, cx)
+                                                    .rounded_full()
+                                                    .max_w(relative(0.4))
+                                                    .truncate()
+                                                    .child(pill.label)
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(commit.subject.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_role(TextRole::Meta, cx)
+                                    .text_color(look.text_3)
+                                    .child(byline),
+                            ),
                     ),
             )
             .context_menu(move |menu, _, _| {

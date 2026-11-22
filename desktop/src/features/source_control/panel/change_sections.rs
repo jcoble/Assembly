@@ -5,15 +5,18 @@ use super::SourceControlPane;
 use crate::core::intents::{open_diff::OpenDiff, open_file::OpenFile};
 use crate::core::socket::{client::SocketClient, row_source::ExpectedRowSource};
 use crate::core::state::viewed_project::{LOCAL_MACHINE, ViewedProject};
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_FIELD, FILE_ROW_HEIGHT, SPACE};
 use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::Named as _;
 use crate::core::ui::file_icon::file_icon;
 use crate::core::ui::reasoned_item::reasoned_item;
 use crate::features::source_control::actions_menu::{READ_ONLY_SCOPE, STILL_RUNNING};
+use crate::features::source_control::file_letter::file_letter;
 use crate::features::source_control::git_labels::split_path;
 use crate::features::source_control::git_status::{ChangedFile, GitStatus, Section};
 use crate::features::source_control::git_target::GitTarget;
-use crate::features::source_control::section_heading::section_heading;
+use crate::features::source_control::section_heading::{section_heading, text_action};
 use crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -24,6 +27,8 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+/// The look's file row: 9 between its pieces.
+const ROW_GAP: Pixels = px(9.);
 const NOT_IN_FINDER: &str = "This file is on a remote machine, so Finder cannot show it.";
 const NO_ROOT: &str = "This panel is not pointed at a repository folder yet.";
 const DELETED: &str = "This file was deleted, so there is nothing on disk to open.";
@@ -127,14 +132,6 @@ fn empty_text(section: Section) -> &'static str {
         Section::Staged => "Nothing is staged yet.",
         Section::Changes => "No changes to files git already knows about.",
         Section::Untracked => "No new files.",
-    }
-}
-fn letter_tone(letter: char, cx: &App) -> Hsla {
-    match letter {
-        'A' | '?' => cx.theme().success,
-        'D' => cx.theme().danger,
-        'R' | 'C' => cx.theme().primary,
-        _ => cx.theme().warning,
     }
 }
 fn icon_button(
@@ -250,14 +247,14 @@ impl SourceControlPane {
         if section == Section::Staged {
             let weak = pane.clone();
             actions.push(
-                icon_button(
+                text_action(
                     id("unstage"),
-                    IconName::Minus,
-                    "Unstage all".into(),
+                    "Unstage all",
                     busy,
                     move |_, cx| {
                         _ = weak.update(cx, |pane, cx| pane.unstage_all(cx));
                     },
+                    cx,
                 )
                 .into_any_element(),
             );
@@ -265,14 +262,14 @@ impl SourceControlPane {
             let paths = stageable_in(status, section);
             let weak = pane.clone();
             actions.push(
-                icon_button(
+                text_action(
                     id("stage"),
-                    IconName::Plus,
-                    "Stage all".into(),
+                    "Stage all",
                     busy || paths.is_empty(),
                     move |_, cx| {
                         _ = weak.update(cx, |pane, cx| pane.stage_paths(paths.clone(), cx));
                     },
+                    cx,
                 )
                 .into_any_element(),
             );
@@ -312,7 +309,7 @@ impl SourceControlPane {
         let hovered = self.hovered_file.as_ref() == Some(&key);
         let selected = self.selected_file.as_ref() == Some(&key);
         let (name, folder) = split_path(&file.path);
-        let muted = cx.theme().muted_foreground;
+        let look = Look::of(cx);
         let read_only = self.read_only(cx);
         let reasons = file_reasons(file, root.is_some(), busy);
         let reasons = if read_only {
@@ -324,43 +321,29 @@ impl SourceControlPane {
         let cluster =
             hovered.then(|| self.row_buttons(file, target, &id, name, busy, &reasons, cx));
         let word = (!hovered).then(|| change_word(file)).flatten();
+        // The look's `.frow`: the file's mark, its name in text-1, its folder in text-3 taking the room, then the letter.
         let row = h_flex()
             .w_full()
-            .gap_2()
+            .gap(ROW_GAP)
+            .child(file_icon(format!("icon:{id}"), &file.path, cx))
+            .child(div().min_w_0().truncate().child(name.to_string()))
             .child(
                 div()
-                    .w(px(12.))
-                    .flex_none()
-                    .text_center()
-                    .text_role(TextRole::Body, cx)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_color(letter_tone(letter, cx))
-                    .child(letter.to_string()),
-            )
-            .child(file_icon(format!("icon:{id}"), &file.path, cx))
-            .child(
-                h_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap_1()
-                    .child(div().truncate().child(name.to_string()))
-                    .when(!folder.is_empty(), |line| {
-                        line.child(
-                            div()
-                                .truncate()
-                                .text_role(TextRole::Body, cx)
-                                .text_color(muted)
-                                .child(folder.to_string()),
-                        )
-                    }),
+                    .truncate()
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(look.text_3)
+                    .child(folder.to_string()),
             )
             .children(word.map(|word| {
                 div()
                     .flex_none()
-                    .text_role(TextRole::Body, cx)
-                    .text_color(muted)
+                    .text_role(TextRole::Meta, cx)
+                    .text_color(look.text_3)
                     .child(word)
             }))
+            .child(file_letter(letter, cx))
             .children(cluster);
         let open = OpenDiff {
             session_id: target.session.clone(),
@@ -371,10 +354,18 @@ impl SourceControlPane {
         let menu = self.file_menu(file, target, read_only, root, busy, cx);
         ListItem::new(SharedString::from(format!("git-file:{id}")))
             .selected(selected)
-            .px_2()
+            .px(SPACE[3])
             .py_0()
-            .min_h(px(28.))
+            .h(FILE_ROW_HEIGHT)
+            .rounded(CORNER_FIELD)
+            .border_1()
+            .border_color(if selected {
+                look.line_selected
+            } else {
+                transparent_black()
+            })
             .text_role(TextRole::Body, cx)
+            .text_color(look.text_1)
             .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected_file = Some(key.clone());
                 window.dispatch_action(Box::new(open.clone()), cx);

@@ -1,5 +1,9 @@
-//! The one header row: the branch menu at the left, how many files changed, and the more-actions menu at the right.
+//! The drawer's head, as the look draws it: "Source control" with how many files changed and the more-actions menu,
+//! then the branch card holding the branch menu and how far it is ahead or behind. Called by the pane's render.
 use super::SourceControlPane;
+use crate::core::theme::look::Look;
+use crate::core::theme::metrics::{CORNER_TILE, SPACE};
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::ui::access::control_ids as ids;
 use crate::core::ui::access::{Control as _, Named as _};
 use crate::core::ui::reasoned_item::reasoned_item;
@@ -8,37 +12,89 @@ use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::section_heading::count_chip;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::*;
 
+/// The card's inside sides: with the branch button's own padding, its icon sits the look's 13 in.
+const CARD_PADDING_X: Pixels = px(8.);
+const BRANCH_ICON: Pixels = px(16.);
+const CHEVRON_ICON: Pixels = px(12.);
+
 impl SourceControlPane {
+    /// The look's drawer head: the "Source control" title on a line with how many files changed and the more-actions
+    /// menu, then the branch card.
     pub(super) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let status = self.shown_status(cx);
-        let mut row = h_flex()
+        let look = Look::of(cx);
+        let title = h_flex()
+            .gap_1()
+            .my(SPACE[3])
+            .pl(SPACE[0])
+            .child(
+                div()
+                    .flex_1()
+                    .text_role(TextRole::Title, cx)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(look.text_1)
+                    .child("Source control"),
+            )
+            .children(
+                status
+                    .as_ref()
+                    .map(|status| count_chip(status.total_files.to_string(), cx)),
+            )
+            .child(self.actions_button(cx));
+        v_flex()
             .flex_none()
-            .min_h(px(32.))
-            .px_2()
-            .pt(px(6.))
-            .pb_2()
-            .gap_1();
-        row = match &status {
-            Some(status) => row.child(self.branch_trigger(status, cx)),
-            None => row,
-        };
-        row.child(div().flex_1())
-            .children(status.map(|status| count_chip(status.total_files.to_string(), cx)))
-            .child(self.actions_button(cx))
+            .px(SPACE[5])
+            .pb(SPACE[1])
+            .child(title)
+            .children(status.map(|status| self.branch_card(&status, cx)))
     }
+    /// The look's `.gcard`: the kit's group box on the card fill, holding the branch menu and how far it is ahead of
+    /// and behind its upstream.
+    fn branch_card(&self, status: &GitStatus, cx: &mut Context<Self>) -> GroupBox {
+        let look = Look::of(cx);
+        let (ahead, behind) = (status.ahead, status.behind);
+        let surface = StyleRefinement::default()
+            .px(CARD_PADDING_X)
+            .py(SPACE[1])
+            .rounded(CORNER_TILE)
+            .bg(look.card)
+            .border_1()
+            .border_color(look.line_chip);
+        GroupBox::new()
+            .id("git-branch-card")
+            .content_style(surface)
+            .child(
+                h_flex()
+                    .gap(SPACE[3])
+                    .child(self.branch_trigger(status, cx))
+                    .child(div().flex_1())
+                    .children((behind > 0).then(|| {
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(look.needs_you)
+                            .child(format!("{behind} behind"))
+                    }))
+                    .children((ahead > 0).then(|| {
+                        div()
+                            .text_role(TextRole::Meta, cx)
+                            .text_color(look.text_2)
+                            .child(format!("{ahead} ahead"))
+                    })),
+            )
+    }
+    /// The branch's name with its menu: the branch icon, the name at 600, a chevron.
     fn branch_trigger(
         &self,
         status: &GitStatus,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (muted, warning, success) = (theme.muted_foreground, theme.warning, theme.success);
-        let (ahead, behind) = (status.ahead, status.behind);
+        let look = Look::of(cx);
         let menu = self.branch_menu.clone();
         let read_only = self.read_only(cx);
         Popover::new("git-branch-menu")
@@ -60,25 +116,20 @@ impl SourceControlPane {
                     .child(
                         h_flex()
                             .min_w_0()
-                            .gap_1()
+                            .gap(SPACE[3])
+                            .text_color(look.text_1)
+                            .child(Icon::new(IconName::GitBranch).size(BRANCH_ICON))
                             .child(
-                                Icon::new(IconName::GitBranch)
-                                    .size(px(12.))
-                                    .text_color(muted),
-                            )
-                            .child(div().min_w_0().truncate().child(status.branch_name()))
-                            .children(
-                                (behind > 0)
-                                    .then(|| div().text_color(warning).child(format!("↓{behind}"))),
-                            )
-                            .children(
-                                (ahead > 0)
-                                    .then(|| div().text_color(success).child(format!("↑{ahead}"))),
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(status.branch_name()),
                             )
                             .child(
                                 Icon::new(IconName::ChevronDown)
-                                    .size(px(12.))
-                                    .text_color(muted),
+                                    .size(CHEVRON_ICON)
+                                    .text_color(look.text_3),
                             ),
                     ),
             )
