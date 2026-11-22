@@ -28,7 +28,7 @@ pub struct RailTotals {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RailCursor {
-    section: usize,
+    section: i32,
     group: String,
     repo_url: String,
     header: usize,
@@ -53,13 +53,22 @@ pub struct RailEntry {
     pub completed_at: Option<i64>,
     pub running: bool,
     pub failed: bool,
+    /// Whether the backend puts this session in the Needs you section.
+    #[serde(default)]
+    pub needs_you: bool,
+    pub status_kind: Option<String>,
+    pub status_text: Option<String>,
+    pub status_reason: Option<String>,
+    pub subagent_count: Option<usize>,
+    pub subagent_done: Option<usize>,
+    pub handle: Option<String>,
     pub unread: bool,
     pub ordering: String,
     /// The branch git has checked out in the session's folder, as the Engine records it.
     pub branch: Option<String>,
     /// The provider's glyph: a bundled icon's path, picked by the backend.
     pub icon: String,
-    pub section_index: usize,
+    pub section_index: i32,
     pub header: usize,
     /// A parent's newest assistant text, cut to 160 characters by the backend.
     pub preview: Option<String>,
@@ -159,6 +168,10 @@ impl Rail {
     }
 
     pub fn set_view(&mut self, view: View) -> Request {
+        if Self::project_done_shelf(self.view_options) != Self::project_done_shelf(view) {
+            self.folded
+                .retain(|key| !matches!(key.as_str(), "done" | "+done"));
+        }
         self.view_options = view;
         self.requery()
     }
@@ -170,17 +183,27 @@ impl Rail {
         statuses: Vec<String>,
         view: View,
     ) -> Request {
-        (
-            self.providers,
-            self.locations,
-            self.statuses,
-            self.view_options,
-        ) = (providers, locations, statuses, view);
-        self.requery()
+        (self.providers, self.locations, self.statuses) = (providers, locations, statuses);
+        self.set_view(view)
+    }
+
+    fn project_done_shelf(view: View) -> bool {
+        view.group_by.project && !view.group_by.status
+    }
+
+    /// Done starts closed in the Project view. Other headers start open.
+    pub fn section_folded(&self, key: &str) -> bool {
+        if key == "done" && Self::project_done_shelf(self.view_options) {
+            return !self.folded.iter().any(|key| key == "+done");
+        }
+        self.folded.iter().any(|folded| folded == key)
     }
 
     /// Folds or unfolds group `key`, reading around its `header`, which stays in the page where it was.
-    pub fn toggle_fold(&mut self, key: String, header: String) -> Request {
+    pub fn toggle_fold(&mut self, mut key: String, header: String) -> Request {
+        if key == "done" && Self::project_done_shelf(self.view_options) {
+            key = "+done".into();
+        }
         if let Some(at) = self.folded.iter().position(|folded| folded == &key) {
             self.folded.remove(at);
         } else {
@@ -324,14 +347,15 @@ fn trim(held: &mut Vec<RailEntry>) -> usize {
 
 /// Where an entry sits in the backend's order, to read after it.
 fn cursor(entry: &RailEntry, view: View) -> RailCursor {
+    let in_project = view.group_by.project && !entry.needs_you && entry.header != 0;
     RailCursor {
-        section: usize::from(view.group_by.status) * entry.section_index,
-        group: if view.group_by.project {
+        section: entry.section_index,
+        group: if in_project {
             entry.group.clone()
         } else {
             String::new()
         },
-        repo_url: if view.group_by.project {
+        repo_url: if in_project {
             entry.repo_url.clone()
         } else {
             String::new()

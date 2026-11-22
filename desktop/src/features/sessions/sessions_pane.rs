@@ -477,6 +477,7 @@ pub fn provider_options(agents: &[String], picked: &[String]) -> Vec<FilterOptio
 }
 
 /// The rail's filtered "need you" total in words, or nothing at zero.
+#[cfg(test)]
 fn needs_words(needs: usize) -> Option<String> {
     match needs {
         0 => None,

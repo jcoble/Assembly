@@ -7,6 +7,7 @@ mod activity;
 mod core;
 mod features;
 mod components {
+    pub use crate::core::ui::three_line_row;
     #[path = "chip_button.rs"]
     pub mod chip_button;
     #[path = "glass_button.rs"]
