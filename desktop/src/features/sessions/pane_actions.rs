@@ -1,5 +1,5 @@
-//! The sessions pane's actions: opening the new-session form (empty, or filled in for a project) and moving a
-//! session to another group with `sessions/mark`.
+//! The sessions pane's actions: opening the new-session form (empty, or filled in for a project), moving a
+//! session to another group with `sessions/mark`, and a row's Connect (`machines/connect`).
 
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -105,6 +105,50 @@ impl SessionsPane {
             .ok();
         });
         self.marking.insert(id, task);
+        cx.notify();
+    }
+
+    /// A row's Connect: asks the backend to reach the machine now, the same `machines/connect` Settings and the
+    /// composer use. The machines list says when it answers, and the rows follow it; one that doesn't answer
+    /// says why above the list. A press for a machine already being reached is the same press.
+    pub(super) fn connect(&mut self, machine: String, cx: &mut Context<Self>) {
+        if self
+            .connecting
+            .as_ref()
+            .is_some_and(|(reaching, _)| reaching == &machine)
+        {
+            return;
+        }
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return;
+        };
+        let call = socket.read(cx).call::<Value>(
+            "machines",
+            "connect",
+            json!({ "machine": machine }),
+            None,
+        );
+        self.row_error = None;
+        let reached = machine.clone();
+        let task = cx.spawn(async move |pane, cx| {
+            let outcome = call.await;
+            pane.update(cx, |pane, cx| {
+                if pane
+                    .connecting
+                    .as_ref()
+                    .is_some_and(|(reaching, _)| reaching == &reached)
+                {
+                    pane.connecting = None;
+                }
+                if let Outcome::Failed(failure) = outcome {
+                    pane.row_error =
+                        Some(format!("Couldn't connect to {reached}: {}", failure.message).into());
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.connecting = Some((machine, task));
         cx.notify();
     }
 }

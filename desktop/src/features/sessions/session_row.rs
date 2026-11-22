@@ -7,8 +7,9 @@
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _};
 use gpui_kit::*;
 
 use super::history::age::{age, elapsed_text};
@@ -16,6 +17,8 @@ use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
 use crate::core::navigation::external_urls::session_link;
+use crate::core::ui::access::Control as _;
+use crate::core::ui::access::control_ids::row as row_id;
 use crate::core::ui::three_line_row::{RowArrow, ThreeLineRow};
 use crate::hinted_item::HintedItem;
 
@@ -23,6 +26,16 @@ use crate::hinted_item::HintedItem;
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
 /// Opens the row's session.
 pub type OnSession = Rc<dyn Fn(String, Option<String>, &mut Window, &mut App)>;
+/// Asks the backend to connect the named machine: the pane's `connect`.
+pub type OnConnect = Rc<dyn Fn(String, &mut App)>;
+
+/// The Connect a row on a machine that isn't answering carries, as the old rail's rows did.
+#[derive(Clone)]
+pub struct Connect {
+    /// A press is already reaching the machine: the button says so and won't press again.
+    pub connecting: bool,
+    pub on_connect: OnConnect,
+}
 
 /// What a row needs from the pane besides its entry: its place, and what its clicks do.
 #[derive(Clone)]
@@ -35,6 +48,8 @@ pub struct RowContext {
     pub now: Option<i64>,
     /// Present when the row has something to open: a question, a workflow or sessions it started.
     pub arrow: Option<RowArrow>,
+    /// Present while the row's machine isn't answering: its Connect button.
+    pub connect: Option<Connect>,
     pub on_open: OnSession,
     pub on_mark: OnMark,
 }
@@ -115,6 +130,7 @@ impl RenderOnce for SessionRow {
             offline,
             now,
             arrow,
+            connect,
             on_open,
             on_mark,
         } = self.context;
@@ -165,7 +181,31 @@ impl RenderOnce for SessionRow {
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
         let link_machine = route.clone();
-        ThreeLineRow {
+        // At the row's bottom right, over it rather than in its layout, as the old rail had it: every row on a
+        // machine that isn't answering offers the connection right there.
+        let connect = connect.zip(route.clone()).map(|(connect, machine)| {
+            let on_connect = connect.on_connect;
+            div().absolute().right(px(16.)).bottom(px(6.)).child(
+                Button::new(SharedString::from(format!("connect:{id}")))
+                    .control(
+                        format!("{}.connect", row_id(&format!("session:{id}"))),
+                        format!("Connect to {machine}"),
+                    )
+                    .outline()
+                    .xsmall()
+                    .label(if connect.connecting {
+                        "Connecting…"
+                    } else {
+                        "Connect"
+                    })
+                    .disabled(connect.connecting)
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        on_connect(machine.clone(), cx);
+                    }),
+            )
+        });
+        let item = ThreeLineRow {
             key: format!("session:{id}").into(),
             lead: mark,
             title: title.into(),
@@ -205,7 +245,8 @@ impl RenderOnce for SessionRow {
                         cx.write_to_clipboard(ClipboardItem::new_string(link))
                     }),
             )
-        })
+        });
+        div().relative().w_full().child(item).children(connect)
     }
 }
 
