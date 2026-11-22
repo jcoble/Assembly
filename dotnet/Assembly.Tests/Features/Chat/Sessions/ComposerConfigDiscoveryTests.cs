@@ -4,6 +4,7 @@ using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
@@ -69,6 +70,96 @@ public sealed class ComposerConfigDiscoveryTests
             Assert.Equal(["notes.md"], Directory.EnumerateFileSystemEntries(folder).Select(Path.GetFileName));
         }
         finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
+    public async Task The_same_discovery_asked_again_starts_no_second_adapter_for_its_answer()
+    {
+        var launcher = new FakeLauncher();
+        await using var discovery = new ComposerConfigDiscovery(launcher, TimeProvider.System);
+        var first = discovery.DiscoverAsync("claude", Target(launcher), "/tmp", default);
+        var second = discovery.DiscoverAsync("claude", Target(launcher), "/tmp", default);
+        var link = await launcher.NextAsync();
+        Assert.Equal(1, launcher.Launches);
+        await link.StartAsync(configOptions: Options("a", "high"));
+        await link.ReplyAsync(await link.ReadAsync("session/set_config_option"), $$"""{"configOptions":{{Options("b", "minimal")}}}""");
+        var one = await first.WaitAsync(Wait);
+        var two = await second.WaitAsync(Wait);
+        Assert.Equal(one.Config.Options, two.Config.Options);
+        Assert.Equal(1, launcher.Launches);
+    }
+
+    [Fact]
+    public async Task A_reopened_discovery_returns_the_saved_catalogue_before_the_refresh_answers()
+    {
+        using var file = new TempDatabase();
+        var launcher = new FakeLauncher();
+        var target = Target(launcher);
+        ComposerCatalogue first;
+        using (var database = TestDatabase.Open(file.Path))
+        {
+            var store = SessionStore.Open(database, TimeProvider.System, "/tmp");
+            await using var discovery = new ComposerConfigDiscovery(launcher, TimeProvider.System, store);
+            var pending = discovery.DiscoverAsync("claude", target, "/tmp", default);
+            var link = await launcher.NextAsync();
+            await link.StartAsync(configOptions: Options("a", "high"));
+            await link.ReplyAsync(await link.ReadAsync("session/set_config_option"), $$"""{"configOptions":{{Options("b", "minimal")}}}""");
+            first = await pending.WaitAsync(Wait);
+        }
+
+        launcher = new FakeLauncher();
+        using var reopened = TestDatabase.Open(file.Path);
+        var reopenedStore = SessionStore.Open(reopened, TimeProvider.System, "/tmp");
+        await using (var discovery = new ComposerConfigDiscovery(launcher, TimeProvider.System, reopenedStore))
+        {
+            var saved = await discovery.DiscoverAsync("claude", target, "/tmp", default).WaitAsync(Wait);
+            Assert.Equal(first.Config.Options, saved.Config.Options);
+            Assert.Equal(first.ModelOptions["b"], saved.ModelOptions["b"]);
+            var refresh = await launcher.NextAsync();
+            await refresh.ReadAsync("initialize");
+        }
+    }
+
+    [Fact]
+    public async Task A_second_warm_draft_starts_no_adapter_after_discovery_in_this_run()
+    {
+        using var file = new TempDatabase();
+        using var database = TestDatabase.Open(file.Path);
+        var store = SessionStore.Open(database, TimeProvider.System, "/tmp");
+        var launcher = new FakeLauncher();
+        var target = Target(launcher);
+        await using var discovery = new ComposerConfigDiscovery(launcher, TimeProvider.System, store);
+        var cold = discovery.DiscoverAsync("claude", target, "/tmp", default);
+        var link = await launcher.NextAsync();
+        await link.StartAsync(configOptions: "[]");
+        await cold.WaitAsync(Wait);
+
+        // Run any scheduled launch up to its first I/O so the count is independent of task scheduling.
+        var outer = SynchronizationContext.Current;
+        Task<ComposerCatalogue> first;
+        Task<ComposerCatalogue> second;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(new InlineLaunchContext());
+            first = discovery.DiscoverAsync("claude", target, "/tmp", default);
+            second = discovery.DiscoverAsync("claude", target, "/tmp", default);
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(outer); }
+
+        await Task.WhenAll(first, second).WaitAsync(Wait);
+        Assert.Equal(1, launcher.Launches);
+    }
+
+    private sealed class InlineLaunchContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            var outer = Current;
+            // Only the first continuation runs inline. Adapter I/O completes on its own scheduler.
+            SetSynchronizationContext(null);
+            try { callback(state); }
+            finally { SetSynchronizationContext(outer); }
+        }
     }
 
     [Fact]

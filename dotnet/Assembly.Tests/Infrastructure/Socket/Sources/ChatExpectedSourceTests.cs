@@ -207,6 +207,10 @@ public sealed partial class ChatExpectedSourceTests
             f.Hosts.Remote.AdditionalFeatures = calls => Register(f.Hosts.Remote, calls, f.Owner);
             f.Hosts.Mac.ChatDoor = new DeferredReads(() => f.Local?.Door);
             f.Hosts.Mac.AdditionalFeatures = calls => localCalls = calls;
+            // The desktop's sessions feature, whose rail move records a mirror-only session's facade on first use.
+            f.Hosts.Mac.SessionFeature = host => new SessionsFeature(host.Sessions, new MachineSet(new FakeMachine(null, host.Sessions)),
+                host.SessionSources, owningMachine: host.Runtime.Machine,
+                recordFirstUse: (session, ct) => f.Hosts.Connections.RecordFirstUseAsync(host.Fixture.Db, host.Sessions, session, ct));
             try
             {
                 await f.Hosts.Start(); Seed(f.Hosts.Remote, "selected"); seedRemote?.Invoke(f.Hosts.Remote);

@@ -241,10 +241,6 @@ public sealed partial class SessionStore : ISessionProjectProjection
     });
 
     /// <summary>
-    /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
-    /// route. A created session and one only its machine's mirror carries are both recorded here.
-    /// </summary>
-    /// <summary>
     /// Refuses a copied facade whose owner record names another owner, or whose facade here names another route,
     /// agent, parent or project. It writes nothing, so a chain can be checked whole before any of it is recorded.
     /// </summary>
@@ -262,9 +258,16 @@ public sealed partial class SessionStore : ISessionProjectProjection
             throw new CallFailed("The copied session identity changed.", "source_changed");
     }
 
+    /// <summary>
+    /// The facade of a remote session whose owner the caller has just established in this writer: the row naming its
+    /// route. A created session and one only its machine's mirror carries are both recorded here.
+    /// <paramref name="title"/> is the title the remote already gave a session this desktop didn't create; it ranks as a
+    /// prompt title, so the remote's later titles replace it.
+    /// </summary>
     internal SessionInfo RecordCopied(IWriteScope scope, string sessionId, SessionsFeature.CreatedSessionFacts facts, string route,
-        string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null)
+        string? projectId, Action<IWriteScope>? accepted = null, Action<IWriteScope>? validate = null, string? title = null)
     {
+        title = string.IsNullOrEmpty(title) ? null : title;
         RefuseCopiedConflict(scope, sessionId, facts, route, projectId);
         if (Get(scope, sessionId) is { } existing)
         {
@@ -278,12 +281,13 @@ public sealed partial class SessionStore : ISessionProjectProjection
             }
             return existing with { IsBare = isBare };
         }
-        var session = new SessionInfo(sessionId, facts.Agent, facts.RepoUrl, null, null, Now(), route,
+        var session = new SessionInfo(sessionId, facts.Agent, facts.RepoUrl, title, null, Now(), route,
             ParentSessionId: facts.ParentSessionId, Helper: facts.ParentSessionId is not null, WorkingFolder: facts.Folder, ProjectId: projectId, IsBare: projectId is null && facts.IsBare);
         scope.Execute("""
-            INSERT INTO session_info(session_id,agent,repo_url,created_at,updated_at,machine,parent_session_id,helper,working_folder,project_id,is_bare)
-            VALUES($id,$agent,$repo,$now,$now,$machine,$parent,$helper,$folder,$project,$bare)
-            """, new("$id", sessionId), new("$agent", facts.Agent), new("$repo", facts.RepoUrl), new("$now", session.UpdatedAt),
+            INSERT INTO session_info(session_id,agent,repo_url,title,title_source,created_at,updated_at,machine,parent_session_id,helper,working_folder,project_id,is_bare)
+            VALUES($id,$agent,$repo,$title,$source,$now,$now,$machine,$parent,$helper,$folder,$project,$bare)
+            """, new("$id", sessionId), new("$agent", facts.Agent), new("$repo", facts.RepoUrl), new("$title", title),
+            new("$source", title is null ? null : "prompt"), new("$now", session.UpdatedAt),
             new("$machine", route), new("$parent", facts.ParentSessionId), new("$helper", session.Helper ? 1 : 0), new("$folder", facts.Folder), new("$project", projectId), new("$bare", session.IsBare ? 1 : 0));
         accepted?.Invoke(scope);
         validate?.Invoke(scope);
@@ -363,7 +367,7 @@ public sealed partial class SessionStore : ISessionProjectProjection
                 throw new CallFailed("The parent's owning folder changed.", "source_changed");
         }
         if (initialConfig is not null && (string.IsNullOrEmpty(initialConfig.TargetId) || initialConfig.Choices is null ||
-            initialConfig.Choices.Count == 0 || initialConfig.Choices.Any(choice => string.IsNullOrEmpty(choice.Key) || choice.Value is null)))
+            initialConfig.Choices.Any(choice => string.IsNullOrEmpty(choice.Key) || choice.Value is null)))
             throw new CallBadArguments("Select the agent settings again.");
         var session = new SessionInfo(Guid.NewGuid().ToString(), agent, folder, title, null, Now(),
             ParentSessionId: parentSessionId, Helper: parentSessionId is not null,

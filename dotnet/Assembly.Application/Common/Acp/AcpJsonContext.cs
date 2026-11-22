@@ -26,6 +26,8 @@ namespace Assembly.Application.Common.Acp;
 [JsonSerializable(typeof(SetConfigOptionResponse))]
 [JsonSerializable(typeof(PromptRequest))]
 [JsonSerializable(typeof(PromptResponse))]
+[JsonSerializable(typeof(V1.PromptReply))]
+[JsonSerializable(typeof(V1.ToolClosed))]
 [JsonSerializable(typeof(StateUpdate))]
 [JsonSerializable(typeof(PermissionSubject))]
 [JsonSerializable(typeof(CancelNotification))]

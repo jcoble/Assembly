@@ -287,14 +287,14 @@ impl SessionPane {
             self.reveal_from(change, before);
         }
         match change {
-            // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
-            // draws again, so a streaming reply never rebuilds the timeline. An ask also holds or frees the composer.
+            // In-place changes before a run ends only redraw their row. Once it ends, a card settling can create
+            // its first fold, so rebuild the entries then. An ask also holds or frees the composer.
             Change::Updated(at)
                 if !matches!(self.view.items[at].kind, ItemKind::Ask { .. })
                     && self.view.items[at]
                         .run_id
                         .as_ref()
-                        .is_none_or(|run| !self.folds.contains_key(run)) =>
+                        .is_none_or(|run| !self.view.run_has_ended(run)) =>
             {
                 self.redraw(at, cx)
             }
@@ -332,7 +332,7 @@ impl SessionPane {
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let pending_changed = self.sync_pending(cx);
         let active = self.view.active_run(self.known_run.as_deref());
-        let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
+        let folds = Fold::all(&self.view, active.as_deref());
         // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
         // it live or on an older page.
         let changed = match change {

@@ -30,7 +30,7 @@ internal sealed partial class RemoteMachine
                 new ForeignAncestor(session.SessionId, machine, session.Facts.Agent, session.Title, session.ParentId))];
             var prepared = engine.Commands.PrepareForeignAncestry(new(machine, sessionId, nodes));
             if (!engine.Commands.ApplyForeignAncestryBatch(scope, prepared).Applied) throw AcceptedSourceChanged();
-            foreach (var session in chain) _sessionStore.RecordCopied(scope, session.SessionId, session.Facts, _name, null);
+            foreach (var session in chain) _sessionStore.RecordCopied(scope, session.SessionId, session.Facts, _name, null, title: session.Title);
             scope.Execute("RELEASE SAVEPOINT mirrored_facade");
             return true;
         }

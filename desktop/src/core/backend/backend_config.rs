@@ -14,7 +14,8 @@ pub struct BackendConfig {
     pub home: PathBuf,
     /// Where the backend keeps its token (an `ASSEMBLY_TOKEN=` line). Read only by the launcher, never printed.
     pub token_file: PathBuf,
-    /// The machine from `ASSEMBLY_REMOTE`, with the lane's remote port and token file.
+    /// The machine from `ASSEMBLY_REMOTE`, with the lane's remote port and token file. The file must give those two
+    /// only when a remote is named; without one they're unused, and 0 and an empty path when the file leaves them out.
     pub remote: Option<String>,
     pub remote_port: u16,
     pub remote_token_file: PathBuf,
@@ -64,14 +65,24 @@ impl BackendConfig {
                 Some(None) => Err(format!("{} needs HOME", file.display())),
             }
         };
+        // A lane that runs no remote may leave the remote fields out; one that names a remote must have them.
+        let unused = remote.is_none();
+        let remote_port = match port("remotePort") {
+            Err(_) if unused && lane["remotePort"].is_null() => 0,
+            read => read?,
+        };
+        let remote_token_file = match path("remoteTokenFile") {
+            Err(_) if unused && lane["remoteTokenFile"].is_null() => PathBuf::new(),
+            read => read?,
+        };
         Ok(Self {
             program: backend.join("Assembly.Desktop"),
             port: port("port")?,
             home: path("home")?,
             token_file: path("tokenFile")?,
             remote,
-            remote_port: port("remotePort")?,
-            remote_token_file: path("remoteTokenFile")?,
+            remote_port,
+            remote_token_file,
             ready_limit: Duration::from_secs(60),
             stop_grace: Duration::from_secs(10),
         })
@@ -114,6 +125,17 @@ mod tests {
         assert_eq!(config.token_file, PathBuf::from("/h/token.env"));
         assert_eq!(config.remote.as_deref(), Some("workbox-test"));
         assert_eq!(config.stop_grace, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_lane_without_a_remote_needs_no_remote_fields() {
+        let dir = lane(r#"{ "port": 18878, "home": "/h", "tokenFile": "/h/token.env" }"#);
+        let config = BackendConfig::read(&dir, None).unwrap();
+        assert_eq!((config.port, config.remote), (18878, None));
+        let error = BackendConfig::read(&dir, Some("workbox-test".into()))
+            .err()
+            .unwrap();
+        assert!(error.ends_with("has no remotePort"), "{error}");
     }
 
     #[test]

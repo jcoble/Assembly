@@ -34,6 +34,22 @@ public static class ComposerConfigJson
         json.WriteEndObject();
     }
 
+    /// <summary>The saved form of one discovery answer, read back as it was written by <see cref="Json(SessionConfig, IReadOnlyDictionary{string, string}?)"/>.</summary>
+    public static ComposerCatalogue ParseCatalogue(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var options = root.GetProperty("options");
+        var commands = root.GetProperty("commands");
+        var models = new Dictionary<string, string>();
+        foreach (var model in root.GetProperty("modelOptions").EnumerateObject())
+            models[model.Name] = model.Value.GetRawText();
+        return new ComposerCatalogue(new SessionConfig(
+            options.ValueKind == JsonValueKind.Null ? null : options.GetRawText(),
+            new Dictionary<string, string>(),
+            commands.ValueKind == JsonValueKind.Null ? null : commands.GetRawText()), models);
+    }
+
     public static InitialSessionConfig? Initial(JsonElement body)
     {
         if (!body.TryGetProperty("initialConfig", out var initial) || initial.ValueKind == JsonValueKind.Null) return null;
