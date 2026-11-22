@@ -113,4 +113,47 @@ public sealed partial class ChatSocketTests
     private static string? Text(JsonElement item, string name) => item.TryGetProperty(name, out var value) ? value.GetString() : null;
 
     private static bool Flag(JsonElement item, string name) => item.GetProperty(name).GetBoolean();
+
+    [Fact]
+    public async Task Waiting_state_since_tracks_earliest_open_ask_and_survives_restart()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        using var socket = await OpenAsync();
+        await SubscribeSessionsAsync(socket);
+
+        RowAt(session, RowKind.Turn, null, """{"state":"started"}""", 5_000);
+        RowAt(session, RowKind.Ask, "q1", """{"state":"open"}""", 10_000);
+        RowAt(session, RowKind.Ask, "q2", """{"state":"open"}""", 25_000);
+        var opened = await ChangesAsync(socket);
+
+        Assert.Equal(2, opened.Count);
+        Assert.Equal(("running", (long?)null), (Text(opened[0], "state"), Number(opened[0], "stateSince")));
+        Assert.Equal(("waiting", 10_000L), (Text(opened[1], "state"), Number(opened[1], "stateSince")));
+
+        var restarted = SessionSummaries.Load(_rows);
+        Assert.Equal(10_000L, restarted.WaitingSince(session));
+        Assert.Equal(10_000L, SessionStore.Open(_db, _time, "checkouts", restarted).Item(_sessions.Get(session)!).StateSince);
+
+        RowAt(session, RowKind.Ask, "q1", """{"state":"answered"}""", 30_000);
+        var advanced = Assert.Single(await ChangesAsync(socket));
+        Assert.Equal(("waiting", 25_000L), (Text(advanced, "state"), Number(advanced, "stateSince")));
+        Assert.Equal(25_000L, SessionSummaries.Load(_rows).WaitingSince(session));
+
+        RowAt(session, RowKind.Ask, "q2", """{"state":"answered"}""", 35_000);
+        RowAt(session, RowKind.Turn, null, """{"state":"finished"}""", 40_000);
+        var cleared = await ChangesAsync(socket);
+        Assert.Equal(2, cleared.Count);
+        Assert.Equal(("running", (long?)null), (Text(cleared[0], "state"), Number(cleared[0], "stateSince")));
+        Assert.Equal(("idle", (long?)null), (Text(cleared[1], "state"), Number(cleared[1], "stateSince")));
+    }
+
+    private void RowAt(string session, string kind, string? item, string payload, long createdAt)
+    {
+        var batch = new RowBatch();
+        batch.Rows.Add(new NewRow("run-1", item, kind, JsonDocument.Parse(payload).RootElement.Clone(), createdAt));
+        _hub.Publish(session, batch);
+    }
+
+    private static long? Number(JsonElement item, string name) =>
+        item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : null;
 }
