@@ -14,7 +14,7 @@ public sealed class AcpClientTests
         new(agent.ClientReads, agent.ClientWrites, permissions ?? new AllowOncePolicy(), TranscriptLog.Discard());
 
     [Fact]
-    public async Task Initialize_offers_only_v2_and_refuses_a_v1_response()
+    public async Task Initialize_offers_only_v2_and_refuses_an_unknown_version()
     {
         var agent = new FakeAgent(); await using var client = Connect(agent);
         var call = client.InitializeAsync(new("test", "1"), default);
@@ -22,7 +22,7 @@ public sealed class AcpClientTests
         var parameters = request.GetProperty("params");
         Assert.Equal(2, parameters.GetProperty("protocolVersion").GetInt32());
         Assert.False(parameters.GetProperty("capabilities").TryGetProperty("_meta", out _));
-        await agent.ReplyAsync(request, """{"protocolVersion":1,"capabilities":{}}""");
+        await agent.ReplyAsync(request, """{"protocolVersion":3,"capabilities":{}}""");
         Assert.Equal(-32022, (await Assert.ThrowsAsync<JsonRpcException>(() => call.WaitAsync(Wait))).Code);
     }
 

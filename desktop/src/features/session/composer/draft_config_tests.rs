@@ -159,3 +159,48 @@ fn an_acp_2_catalogue_with_config_ids_and_an_on_off_option_gives_a_ready_draft()
     assert!(draft.ready());
     assert_eq!(draft.config.choices["model"], "A");
 }
+#[test]
+fn a_provider_without_a_model_control_still_gives_a_ready_draft_with_no_model_picker() {
+    let mode = json!({
+        "id": "mode",
+        "name": "Mode",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "onRequest",
+        "options": [
+            {"value": "allowAll", "name": "Allow all"},
+            {"value": "onRequest", "name": "Ask on request"}
+        ]
+    });
+    let catalogue: Catalogue = serde_json::from_value(json!({
+        "options": [mode],
+        "choices": {},
+        "commands": null,
+        "modelOptions": {}
+    }))
+    .unwrap();
+    let mut draft = DraftConfig::new(catalogue, None).unwrap();
+    assert!(draft.ready());
+    assert_eq!(draft.config.choices["mode"], "onRequest");
+    assert!(
+        !draft
+            .config
+            .menus()
+            .iter()
+            .any(|(option, _)| option.model())
+    );
+    draft.choose("mode", "allowAll", None).unwrap();
+    assert_eq!(draft.config.choices["mode"], "allowAll");
+
+    let empty: Catalogue = serde_json::from_value(json!({
+        "options": [],
+        "choices": {},
+        "commands": null,
+        "modelOptions": {}
+    }))
+    .unwrap();
+    let empty_draft = DraftConfig::new(empty, None).unwrap();
+    assert!(empty_draft.ready());
+    assert!(empty_draft.config.choices.is_empty());
+    assert!(empty_draft.config.menus().is_empty());
+}
