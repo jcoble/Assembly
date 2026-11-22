@@ -18,14 +18,40 @@ pub struct DraftConfig {
     catalogue: Catalogue,
 }
 impl DraftConfig {
+    /// Builds draft settings from discovery; a provider without a model control still starts ready with no model picker.
     pub fn new(catalogue: Catalogue, remembered: Option<&Value>) -> Result<Self, String> {
-        let model = catalogue
-            .config
-            .options
-            .iter()
-            .flatten()
-            .find(|option| option.model() && option.kind == "select" && !option.options.is_empty())
-            .ok_or("The provider did not advertise a model control.")?;
+        let model =
+            catalogue.config.options.iter().flatten().find(|option| {
+                option.model() && option.kind == "select" && !option.options.is_empty()
+            });
+        let effort = remembered.and_then(|v| v["effort"].as_str());
+        let Some(model) = model else {
+            let mut draft = Self {
+                config: catalogue.config.clone(),
+                catalogue,
+            };
+            draft.config.choices.clear();
+            // Keep each offered non-model select's live default (or remembered effort) so Send works without a model picker.
+            if let Some(options) = draft.config.options.as_mut() {
+                for option in options.iter_mut().filter(|o| o.kind == "select") {
+                    let wanted = if option.effort() { effort } else { None };
+                    let selected = wanted.filter(|v| option.offered(v)).or_else(|| {
+                        option
+                            .current_value
+                            .as_deref()
+                            .filter(|v| option.offered(v))
+                    });
+                    if let Some(selected) = selected {
+                        let selected = selected.to_string();
+                        option.current_value = Some(selected.clone());
+                        draft.config.choices.insert(option.id.clone(), selected);
+                    } else {
+                        option.current_value = None;
+                    }
+                }
+            }
+            return Ok(draft);
+        };
         let observed =
             |value: &&str| model.offered(value) && catalogue.model_options.contains_key(*value);
         let value = remembered
@@ -39,7 +65,6 @@ impl DraftConfig {
             catalogue,
         };
         draft.config.choices.clear();
-        let effort = remembered.and_then(|v| v["effort"].as_str());
         if let Some(value) = value {
             draft.select_model(&id, &value, effort)?;
         } else if let Some(model) = draft
@@ -52,17 +77,20 @@ impl DraftConfig {
         }
         Ok(draft)
     }
+    /// Ready once the model control has an observed choice, or right away when the provider advertises no model control.
     pub fn ready(&self) -> bool {
-        self.config
+        let Some(model) = self
+            .config
             .options
             .iter()
             .flatten()
-            .filter(|o| o.model())
-            .any(|o| {
-                self.config.choices.get(&o.id).is_some_and(|value| {
-                    o.offered(value) && self.catalogue.model_options.contains_key(value)
-                })
-            })
+            .find(|o| o.model() && o.kind == "select" && !o.options.is_empty())
+        else {
+            return true;
+        };
+        self.config.choices.get(&model.id).is_some_and(|value| {
+            model.offered(value) && self.catalogue.model_options.contains_key(value)
+        })
     }
     pub fn apply_remembered(&mut self, remembered: Option<&Value>) -> Result<(), String> {
         *self = Self::new(self.catalogue.clone(), remembered)?;

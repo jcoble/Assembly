@@ -32,6 +32,10 @@ public sealed record InitializeResponse(
         && Capabilities.TryGetProperty("session", out var session) && session.ValueKind == JsonValueKind.Object
         && session.TryGetProperty("delete", out var delete) && delete.ValueKind == JsonValueKind.Object;
 
+    /// <summary>Whether the agent signs out on request: <c>capabilities.auth.logout</c> is present.</summary>
+    [JsonIgnore]
+    public bool CanLogout => Find(Capabilities, "auth", "logout") is { ValueKind: JsonValueKind.Object };
+
     /// <summary>Whether prompts may carry image blocks: <c>capabilities.session.prompt.image</c> is present.</summary>
     [JsonIgnore]
     public bool AcceptsImages => Find(Capabilities, "session", "prompt", "image") is { ValueKind: JsonValueKind.Object };

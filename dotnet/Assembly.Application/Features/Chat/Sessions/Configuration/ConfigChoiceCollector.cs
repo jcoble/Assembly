@@ -19,7 +19,7 @@ internal static class ConfigChoiceCollector
         var required = strictInitial ? new Dictionary<string, string>(choices) : new Dictionary<string, string>();
         var model = ConfigOptions.Model(observed.Options);
         KeyValuePair<string, string>? confirmedModel = null;
-        if (strictInitial && (model is null || !choices.ContainsKey(model.Value.Id)))
+        if (strictInitial && model is { Values.Count: > 0 } && !choices.ContainsKey(model.Value.Id))
             throw new CallFailed("The agent no longer offers the initial model selection.");
         if (config.PendingModel is { } pending)
         {
