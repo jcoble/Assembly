@@ -1,8 +1,9 @@
 //! Content tabs in the window chrome, backed by the dock's existing panels and layout. Selection, closing and
 //! movement still go through the dock; this bar keeps no second list of open tabs.
 //!
-//! The kit's tab bar in its segmented variant, so the strip keeps the kit's tab-list role, wheel scrolling, reveal of
-//! a clipped tab and keyboard focus; each tab's close is a named kit icon button. Called by the top bar.
+//! The kit's tab bar in its segmented variant with its track cleared, so the strip keeps the kit's tab-list role,
+//! wheel scrolling, reveal of a clipped tab and keyboard focus; each tab's close is a named kit icon button. Called by
+//! the top bar.
 
 use std::sync::Arc;
 
@@ -74,6 +75,9 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
         .collect::<Vec<_>>();
     TabBar::new("chrome-content-tabs")
         .segmented()
+        // No track behind the tabs, so they sit on the bar as separate chips with only the open one filled, as the
+        // old app's tab row did.
+        .bg(cx.theme().transparent)
         .max_width(TAB_MAX_WIDTH)
         .selected_index(selected)
         .children(chips)
