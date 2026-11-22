@@ -12,6 +12,38 @@ namespace Assembly.Tests.Infrastructure.Socket;
 public sealed class SessionRailSectionsSocketTests
 {
     [Fact]
+    public async Task Rail_counts_terminal_native_subagents_as_done()
+    {
+        await using var host = new TwoHosts.Host();
+        const string parent = "native-parent";
+        host.Fixture.SeedSession(parent);
+        host.Fixture.Db.Writer.Write("test.project-session", scope =>
+        {
+            host.Sessions.ProjectEngineSession(scope, new(parent, "codex", "/test", "Test", null, 1), null, "/test");
+            return 0;
+        });
+        var batch = new RowBatch();
+        void Native(string id, string state, string? stop = null) =>
+            batch.Rows.Add(new("run", id, RowKind.Subagent, JsonSerializer.SerializeToElement(
+                new SubagentPayload(parent, id, null, state, stop, null, false, null), RowJsonContext.Rows.SubagentPayload),
+                batch.Rows.Count + 1));
+        Native("finished", "running");
+        Native("finished", "idle", "end_turn");
+        Native("running", "running");
+        Native("announced", "unknown");
+        Native("not-started", "idle");
+        RowStore.Open(host.Fixture.Db).Commit(parent, batch);
+        await host.Start();
+
+        using var socket = await ApiTests.OpenOwnerSocketAsync(host.Address, "isolated-token");
+        var result = ApiTests.Result(await ApiTests.SocketRequestAsync(socket, 1, "sessions", "rail", "{}"));
+        var row = result.GetProperty("sessions").EnumerateArray()
+            .Single(row => row.GetProperty("sessionId").GetString() == parent);
+        Assert.Equal(4, row.GetProperty("subagentCount").GetInt32());
+        Assert.Equal(1, row.GetProperty("subagentDone").GetInt32());
+    }
+
+    [Fact]
     public async Task A_manual_mark_shelves_a_failed_session_unless_the_owner_has_an_open_need()
     {
         await using var host = new TwoHosts.Host();

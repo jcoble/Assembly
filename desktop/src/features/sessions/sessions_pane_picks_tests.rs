@@ -120,6 +120,27 @@ fn folding_settled_sends_one_read() {
     assert!(rail.changed().is_none(), "the one read is out");
 }
 
+#[test]
+fn done_opens_in_project_view_after_it_was_folded_in_status_view() {
+    let mut rail = Rail::default();
+    let status = View {
+        group_by: GroupBy {
+            status: true,
+            project: false,
+        },
+        ..View::default()
+    };
+    rail.set_view(status);
+    rail.toggle_fold("done".into(), "section:done".into());
+    assert!(rail.section_folded("done"));
+
+    rail.set_view(View::default());
+    assert!(rail.section_folded("done"));
+    let (_, args) = rail.toggle_fold("done".into(), "section:done".into());
+    assert!(!rail.section_folded("done"));
+    assert_eq!(args["folded"], json!(["+done"]));
+}
+
 // Pins: sessions-list#9
 #[test]
 fn folding_a_group_keeps_its_header_in_the_page() {

@@ -351,7 +351,10 @@ internal static class Schema
                AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
                                AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy,
             COALESCE(child.total,0) AS child_total, COALESCE(child.done,0) AS child_done,
-            (SELECT json_array(COUNT(*), COUNT(*) FILTER (WHERE json_extract(n.payload,'$.state') IN ('finished','completed','ended')))
+            (SELECT json_array(COUNT(*), COUNT(*) FILTER (
+               WHERE json_extract(n.payload,'$.state') IN ('finished','completed','ended')
+                 OR (json_extract(n.payload,'$.state')='idle'
+                     AND COALESCE(json_extract(n.payload,'$.stopReason'),json_extract(n.payload,'$.error')) IS NOT NULL)))
                FROM rows n INDEXED BY rows_summary
                WHERE n.session_id=p.facade_id AND {SummaryKinds} AND n.kind='subagent'
                  AND n.item_id IS NOT NULL AND json_extract(n.payload,'$.sessionId')=p.session_id

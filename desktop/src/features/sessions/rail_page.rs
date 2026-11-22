@@ -168,6 +168,10 @@ impl Rail {
     }
 
     pub fn set_view(&mut self, view: View) -> Request {
+        if Self::project_done_shelf(self.view_options) != Self::project_done_shelf(view) {
+            self.folded
+                .retain(|key| !matches!(key.as_str(), "done" | "+done"));
+        }
         self.view_options = view;
         self.requery()
     }
@@ -179,19 +183,17 @@ impl Rail {
         statuses: Vec<String>,
         view: View,
     ) -> Request {
-        (
-            self.providers,
-            self.locations,
-            self.statuses,
-            self.view_options,
-        ) = (providers, locations, statuses, view);
-        self.requery()
+        (self.providers, self.locations, self.statuses) = (providers, locations, statuses);
+        self.set_view(view)
+    }
+
+    fn project_done_shelf(view: View) -> bool {
+        view.group_by.project && !view.group_by.status
     }
 
     /// Done starts closed in the Project view. Other headers start open.
     pub fn section_folded(&self, key: &str) -> bool {
-        if key == "done" && self.view_options.group_by.project && !self.view_options.group_by.status
-        {
+        if key == "done" && Self::project_done_shelf(self.view_options) {
             return !self.folded.iter().any(|key| key == "+done");
         }
         self.folded.iter().any(|folded| folded == key)
@@ -199,8 +201,7 @@ impl Rail {
 
     /// Folds or unfolds group `key`, reading around its `header`, which stays in the page where it was.
     pub fn toggle_fold(&mut self, mut key: String, header: String) -> Request {
-        if key == "done" && self.view_options.group_by.project && !self.view_options.group_by.status
-        {
+        if key == "done" && Self::project_done_shelf(self.view_options) {
             key = "+done".into();
         }
         if let Some(at) = self.folded.iter().position(|folded| folded == &key) {
