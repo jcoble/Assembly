@@ -33,31 +33,44 @@ public static class SessionHandles
 
     public static void Upgrade(IWriteScope scope, string table, string id)
     {
-        if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info($table) WHERE name='handle'",
-                row => row.Long(0), new SqlArg("$table", table)) != 0)
+        var trigger = $"{table}_register_handle";
+        if (scope.QueryFirst("SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name=$trigger",
+                row => row.Long(0), new SqlArg("$trigger", trigger)) != 0)
             return;
 
-        // The seed is staged outside the unique index, so backfill and insertion use the exact same allocator.
-        var pick = $"json_extract('{Adjectives}', '$[' || (random() & 63) || ']') || '-' || json_extract('{Nouns}', '$[' || (random() & 63) || ']')";
+        // The engine and the facade can refer to the same session. They share the host's handle registry.
+        // A session ID gives the same word choice when a development fixture is seeded again.
         scope.Execute($"""
-            ALTER TABLE {table} ADD COLUMN handle TEXT;
-            UPDATE {table} SET handle={pick};
-            WITH ranked AS (
-              SELECT {id},row_number() OVER (PARTITION BY ifnull(machine,''),handle ORDER BY {id}) AS n
-              FROM {table})
-            UPDATE {table} SET handle=handle || '-' || hex({id})
-            WHERE {id} IN (SELECT {id} FROM ranked WHERE n>1);
-            CREATE UNIQUE INDEX {table}_handle ON {table}(ifnull(machine,''),handle);
-            CREATE TRIGGER {table}_assign_handle AFTER INSERT ON {table}
-            WHEN new.handle IS NULL BEGIN
-              UPDATE {table} SET handle=(
-                WITH candidate(name) AS MATERIALIZED (SELECT {pick})
+            CREATE TABLE IF NOT EXISTS session_handle (
+              session_id TEXT PRIMARY KEY NOT NULL,
+              handle TEXT UNIQUE
+            );
+            CREATE TRIGGER IF NOT EXISTS session_handle_allocate AFTER INSERT ON session_handle BEGIN
+              UPDATE session_handle SET handle=(
+                WITH RECURSIVE hash(position, value) AS (
+                  VALUES(1, 0)
+                  UNION ALL
+                  SELECT position+1, (value*131+unicode(substr(new.session_id,position,1))) & 4095
+                  FROM hash WHERE position<=length(new.session_id)
+                ), candidate(name) AS MATERIALIZED (
+                  SELECT json_extract('{Adjectives}', '$[' || (value & 63) || ']') || '-' ||
+                         json_extract('{Nouns}', '$[' || (value >> 6) || ']')
+                  FROM hash WHERE position=length(new.session_id)+1
+                )
                 SELECT CASE
-                  WHEN NOT EXISTS (SELECT 1 FROM {table} s WHERE ifnull(s.machine,'')=ifnull(new.machine,'') AND s.handle=c.name)
+                  WHEN NOT EXISTS (SELECT 1 FROM session_handle h WHERE h.handle=c.name)
                     THEN c.name
-                  ELSE c.name || '-' || hex(new.{id}) END
+                  ELSE c.name || '-' || lower(hex(new.session_id)) END
                 FROM candidate c)
-              WHERE {id}=new.{id};
+              WHERE session_id=new.session_id;
+            END;
+            INSERT INTO session_handle(session_id)
+            SELECT s.{id} FROM {table} s
+            WHERE NOT EXISTS (SELECT 1 FROM session_handle h WHERE h.session_id=s.{id})
+            ORDER BY s.{id};
+            CREATE TRIGGER {trigger} AFTER INSERT ON {table} BEGIN
+              INSERT INTO session_handle(session_id)
+              SELECT new.{id} WHERE NOT EXISTS (SELECT 1 FROM session_handle WHERE session_id=new.{id});
             END;
             """);
     }

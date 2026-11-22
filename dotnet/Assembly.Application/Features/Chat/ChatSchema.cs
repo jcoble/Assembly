@@ -127,7 +127,7 @@ internal static class Schema
           SELECT DISTINCT session_id, source_machine, source_generation, source_route FROM source_candidates),
         canonical_sessions AS (
           SELECT e.id AS session_id, e.machine AS source_machine, 0 AS source_generation, NULL AS source_route,
-            e.provider AS agent, e.folder, e.title, e.updated_ms AS updated_at, e.parent_id, e.handle, e.state,
+            e.provider AS agent, e.folder, e.title, e.updated_ms AS updated_at, e.parent_id, NULL AS handle, e.state,
             {Assembly.Application.Common.Engine.BareSessionFolder.Predicate("e.project_id", "e.folder")} AS is_bare
           FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
           WHERE e.holder='local' AND e.state<>'foreign'
@@ -151,7 +151,7 @@ internal static class Schema
             CASE WHEN c.source_route IS NULL THEN COALESCE(s.repo_url,c.folder) ELSE c.folder END AS repo_url,
             COALESCE(s.title,c.title) AS title, c.source_route AS machine, COALESCE(s.updated_at,c.updated_at) AS updated_at, s.completed_at, s.settled_at, COALESCE(s.read_seq,0) AS read_seq,
             c.source_machine, c.source_generation, c.source_route,
-            s.pinned_at, s.orchestrator_at, s.position, s.session_id AS facade_id, COALESCE(c.is_bare,0) AS is_bare, COALESCE(c.handle,s.handle) AS handle, c.state
+            s.pinned_at, s.orchestrator_at, s.position, s.session_id AS facade_id, COALESCE(c.is_bare,0) AS is_bare, c.handle, c.state
           FROM canonical_sessions c LEFT JOIN session_info s ON s.session_id=c.session_id AND s.machine IS c.source_route
             AND s.agent=c.agent AND s.parent_session_id IS c.parent_id
             AND (c.source_route IS NULL OR EXISTS (SELECT 1 FROM engine_session known
@@ -161,7 +161,7 @@ internal static class Schema
           WHERE c.parent_id IS NULL OR s.helper=1
           UNION ALL
           SELECT s.session_id, s.agent, s.repo_url, s.title, s.machine, s.updated_at, s.completed_at, s.settled_at, s.read_seq,
-            source.source_machine, source.source_generation, source.source_route, s.pinned_at, s.orchestrator_at, s.position, s.session_id, s.is_bare AND s.project_id IS NULL, s.handle, NULL
+            source.source_machine, source.source_generation, source.source_route, s.pinned_at, s.orchestrator_at, s.position, s.session_id, s.is_bare AND s.project_id IS NULL, NULL, NULL
           FROM session_info s LEFT JOIN rail_sources source ON source.session_id=s.session_id AND source.source_route IS s.machine
           WHERE (s.parent_session_id IS NULL OR s.helper=1)
             AND NOT EXISTS (SELECT 1 FROM canonical_sessions c WHERE c.session_id=s.session_id
@@ -343,7 +343,7 @@ internal static class Schema
             AND p.source_machine=child.source_machine AND p.source_generation=child.source_generation
           GROUP BY child.parent_id, child.source_machine, child.source_generation),
         family AS MATERIALIZED (
-          SELECT p.*, s.turn, s.failed, s.status_kind, s.text, s.reason, s.handle, s.pinned_at, s.orchestrator_at, s.position,
+          SELECT p.*, s.turn, s.failed, s.status_kind, s.text, s.reason, COALESCE(s.handle,h.handle) AS handle, s.pinned_at, s.orchestrator_at, s.position,
             EXISTS (SELECT 1 FROM rows w INDEXED BY rows_summary
              WHERE p.kind = 'session' AND w.session_id = p.facade_id AND {SummaryKinds} AND w.kind = 'task'
                AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
@@ -362,6 +362,7 @@ internal static class Schema
                AND n.item_id IS NOT NULL) AS native_activity
           FROM page p LEFT JOIN sessions s ON p.kind='session' AND s.session_id=p.session_id
             AND s.source_machine IS p.source_machine AND s.source_generation IS p.source_generation AND s.source_route IS p.source_route
+          LEFT JOIN session_handle h ON h.session_id=COALESCE(s.facade_id,CASE WHEN s.source_route IS NULL THEN s.session_id END)
           LEFT JOIN child_counts child ON child.parent_id=p.session_id AND child.source_machine=p.source_machine
             AND child.source_generation=p.source_generation)
         SELECT 0, (SELECT next_n IS NOT NULL FROM page_bounds), NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,

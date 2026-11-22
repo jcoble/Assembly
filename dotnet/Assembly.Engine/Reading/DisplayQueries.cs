@@ -15,7 +15,7 @@ internal static class DisplayQueries
     private static string Columns(string kind) => Common + "," + (kind switch
     {
         "workflow_settings" => "muted_until",
-        "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms,project_id,branch,checkout_state,checkout_operation_id,handle",
+        "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms,project_id,branch,checkout_state,checkout_operation_id",
         "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms," + Workflows.Reading.WorkflowReadModels.RunColumns,
         "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason," + Workflows.Reading.WorkflowReadModels.StepColumns,
         "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms,addressee_session_id",
@@ -67,6 +67,7 @@ internal static class DisplayQueries
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
             $"'isBare',json(CASE WHEN {Assembly.Application.Common.Engine.BareSessionFolder.Predicate("t.project_id", "t.folder")} THEN 'true' ELSE 'false' END)," +
+            "'handle',(SELECT h.handle FROM session_handle h WHERE h.session_id=t.id)," +
             "'canSteer',json(CASE WHEN t.can_steer=1 THEN 'true' ELSE 'false' END)," +
             "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id)," +
             "'checkoutReason',(SELECT CASE WHEN json_type(o.receipt_json,'$.data.reason')='text' AND " +
