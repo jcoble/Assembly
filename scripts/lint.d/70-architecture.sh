@@ -5,9 +5,20 @@
 # file, so lanes committing at once don't each start a .NET build. That's scoping, not an allow list: CI still checks
 # everything.
 cd "$(dirname "$0")/../.."
-if [ -n "${LINT_STAGED_ONLY:-}" ] && ! git diff --cached --name-only | grep -qE '^dotnet/|\.(cs|csproj|props|editorconfig)$'; then
-  echo "architecture: skipped, the commit changes no .NET file"
-  exit 0
+if [ -n "${LINT_STAGED_ONLY:-}" ]; then
+  if ! git diff --cached --name-only | grep -qE '^dotnet/|\.(cs|csproj|props|targets|slnx|editorconfig)$'; then
+    echo "architecture: skipped, the commit changes no .NET file"
+    exit 0
+  fi
+elif [ -n "${LINT_BASE:-}" ]; then
+  changed=$(git -c core.quotePath=false diff --name-only "$LINT_BASE" HEAD) || {
+    echo "architecture: cannot diff against $LINT_BASE; refusing" >&2
+    exit 2
+  }
+  if ! grep -qE '^dotnet/|\.(cs|csproj|props|targets|slnx|editorconfig)$' <<<"$changed"; then
+    echo "architecture: skipped, the pull request changes no .NET file"
+    exit 0
+  fi
 fi
 command -v dotnet >/dev/null || { echo "architecture: no dotnet on PATH; refusing" >&2; exit 2; }
 export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1

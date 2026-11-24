@@ -22,14 +22,28 @@ if [ "$mode" != list ]; then
     echo "lane lifecycle refuses protected names" >&2; exit 1 ;;
   esac
 fi
-lanes=$HOME/dev/work/worktrees/Assembly
+if [ -n "${ASSEMBLY_WORKTREES_DIR:-}" ]; then
+  lanes=$ASSEMBLY_WORKTREES_DIR
+elif [ "$(uname -s)" = Darwin ] && [[ "$HOME" == /Users/* ]] && [ -d /Volumes/Files ]; then
+  lanes=/Volumes/Files/assembly-worktrees
+else
+  lanes=$HOME/dev/work/worktrees/Assembly
+fi
+legacy_lanes=$HOME/dev/work/worktrees/Assembly
 dir=$lanes/$name
+if [ "$mode" = remove ] || [ "$mode" = clean ]; then
+  if [ ! -e "$dir" ] && [ -e "$legacy_lanes/$name" ]; then dir=$legacy_lanes/$name; fi
+fi
 main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
 reserved() { ssh workbox-test 'cat ~/assembly-dotnet-*/lane-number 2>/dev/null' || true; }
 
 case "$mode" in
   new)
     [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "a lane name is lowercase letters, digits and dashes" >&2; exit 2; }
+    if [ "${ASSEMBLY_LANE_NO_REAP:-0}" != 1 ] && [ -f "$script_root/scripts/lane-reap.sh" ]; then
+      bash "$script_root/scripts/lane-reap.sh" --no-fetch --quiet || true
+    fi
+    mkdir -p "$lanes"
     [ ! -e "$dir" ] || { echo "$dir already exists" >&2; exit 1; }
     node "$script_root/scripts/dev-lane-clean.ts" stale "$dir"
     used=$(reserved)
@@ -45,6 +59,7 @@ case "$mode" in
   Workbox Test host 127.0.0.1:$BOX_PORT, unit $BOX_UNIT, folder ~/$BOX_DATA") ;;
   adopt)
     [ -n "$name" ] || { echo "usage: scripts/lane.sh adopt <name>" >&2; exit 2; }
+    mkdir -p "$lanes"
     [ ! -e "$dir" ] || { echo "$dir already exists" >&2; exit 1; }
     number=$(ssh workbox-test "cat ~/assembly-dotnet-$name/lane-number 2>/dev/null" || true)
     [ -n "$number" ] || { echo "no lane named '$name' is reserved on Workbox Test" >&2; exit 1; }
@@ -69,7 +84,8 @@ case "$mode" in
     [ -n "$name" ] && [ -f "$dir/.lane" ] || { echo "no lane named '$name' at $dir" >&2; exit 1; }
     dirty=$(git -C "$dir" status --short)
     [ -z "$dirty" ] || { echo "$dir has uncommitted changes; commit or stash them first:"; echo "$dirty"; exit 1; } >&2
-    git -C "$dir" merge-base --is-ancestor HEAD main || {
+    git -C "$dir" merge-base --is-ancestor HEAD main \
+      || (git -C "$dir" rev-parse -q --verify refs/remotes/origin/main >/dev/null && git -C "$dir" merge-base --is-ancestor HEAD origin/main) || {
       echo "$dir has work not merged into main; merge it before removing the lane" >&2; exit 1;
     }
     # Both app:dev (desktop/) and ui-check (checkout root) retain a lane cwd.
@@ -117,7 +133,7 @@ case "$mode" in
     git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted the local branch lane/$name (merged, or all of it pushed)" || echo "kept branch lane/$name (it has commits that aren't merged or pushed)"
     echo "removed lane $name and its exclusively owned resources" ;;
   list)
-    git -C "$main" worktree list | grep "$lanes/" || echo "no lanes here"
+    git -C "$main" worktree list | grep -E "($lanes/|$legacy_lanes/)" || echo "no lanes here"
     echo "numbers reserved on Workbox Test:"
     ssh workbox-test 'for f in ~/assembly-dotnet-*/lane-number; do [ -f "$f" ] && echo "  $(cat "$f") $(basename "$(dirname "$f")")"; done; true' ;;
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
