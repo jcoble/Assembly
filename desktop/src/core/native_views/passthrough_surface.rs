@@ -47,7 +47,7 @@ impl LogicalRect {
     }
 
     /// Converts to GPUI window-relative `Bounds<Pixels>`.
-    pub fn to_gpui_bounds(&self) -> Bounds<Pixels> {
+    pub fn to_gpui_bounds(self) -> Bounds<Pixels> {
         Bounds::new(
             point(px(self.x as f32), px(self.y as f32)),
             size(px(self.width as f32), px(self.height as f32)),

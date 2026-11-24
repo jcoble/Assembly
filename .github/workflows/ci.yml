@@ -105,7 +105,8 @@ jobs:
           mkdir -p ~/.apt-archives/partial
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Dir::Cache::Archives=$HOME/.apt-archives install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
-            libxcb1-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
+            libxcb1-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev
           sudo chown -R "$USER" ~/.apt-archives
       # The socket tests against the real backend start this build's binary (core/socket/real_backend.rs). With
       # ASSEMBLY_REAL_BACKEND set, a backend that isn't built fails them rather than letting them pass empty.
