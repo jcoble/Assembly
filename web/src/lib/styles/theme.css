@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 /* ============================================================================
  * Assembly Hybrid Theme — Glass Primary on Tightened Spotify Surface Ladder
@@ -9,8 +10,51 @@
  * shine through cleanly behind floating Glass chrome and overlays.
  * ============================================================================ */
 
+@custom-variant dark (&:where(:root, :root *));
+
+/* Match both bits-ui 2.18.1 `data-state="..."` and newer presence attributes. */
+@custom-variant data-checked (&[data-state='checked'], &[data-checked]);
+@custom-variant data-unchecked (&[data-state='unchecked'], &[data-unchecked]);
+@custom-variant data-active (&[data-state='active'], &[data-active]);
+@custom-variant data-open (&[data-state='open'], &[data-open]);
+@custom-variant data-closed (&[data-state='closed'], &[data-closed]);
+
+/* Map shadcn-svelte color utilities straight to Assembly's theme slots. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
 :root,
 :root[data-theme='glass'] {
+  color-scheme: dark;
+
   /* Outer dark canvas behind rounded panel cards (matches GPUI HybridFrame canvas 1:1) */
   --color-canvas: #000000;
   /* Tightened Spotify surface ladder matching GPUI Chat card (`#1c1e23`) seamlessly */
@@ -35,6 +79,8 @@
   --color-border: rgba(255, 255, 255, 0.09);
   --color-field-border: rgba(255, 255, 255, 0.13);
   --color-focus: rgba(30, 215, 96, 0.42);
+  --focus-border: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  --focus-ring: 0 0 0 2px var(--color-focus);
   --color-selected: rgba(255, 255, 255, 0.11);
   --color-hover: rgba(255, 255, 255, 0.06);
 
@@ -43,19 +89,86 @@
   --color-bad: #ff6d91;
   --color-attention: #f5b95b;
   --color-merged: #a371f7;
+  --color-idle: #a7aebd;
   --color-attention-bg: rgba(245, 185, 91, 0.16);
   --color-live-bg: rgba(84, 185, 255, 0.14);
   --color-good-bg: rgba(30, 215, 96, 0.14);
   --color-bad-bg: rgba(255, 109, 145, 0.14);
+  --color-bad-bg-strong: rgba(255, 109, 145, 0.22);
   --color-scrim: rgba(6, 8, 12, 0.56);
 
-  /* Tightened spacing & radii (less spacey than stock Spotify) */
+  /* Elevation & menu sheets (used by shared shadcn-svelte UI kit primitives) */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.16);
+  --shadow-lg: 0 16px 42px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-thumb: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --shadow-thumb-sm: 0 1px 3px rgba(0, 0, 0, 0.26);
+
+  --menu-surface: var(--color-overlay);
+  --menu-sheet-surface: color-mix(in srgb, var(--color-text) 7%, var(--color-surface-solid));
+  --menu-sheet-radius: 12px;
+  --menu-sheet-inset: 6px;
+  --menu-sheet-min-width: 240px;
+  --menu-label-inset: 6px 10px 3px;
+  --menu-row-radius: 6px;
+  --menu-row-inset: 7px 10px;
+  --menu-row-gap: 10px;
+  --menu-row-hover: color-mix(in srgb, var(--color-text) 9%, transparent);
+  --menu-row-active: var(--color-hover);
+  --menu-row-description-gap: 2px;
+  --menu-separator-inset: 5px;
+
+  /* Tightened spacing & radii */
   --top-bar-height: 44px;
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
+  --radius-pill: 999px;
   --row-pad-y: 5px;
   --row-pad-x: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Shared scrollbar tokens */
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--color-text) 18%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-text) 30%, transparent);
+
+  /* shadcn-svelte semantic slots */
+  --background: var(--color-surface-solid);
+  --foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-overlay);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-on-accent);
+  --secondary: var(--color-selected);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-elevated);
+  --muted-foreground: var(--color-text-2);
+  --accent: var(--color-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-bad);
+  --destructive-foreground: var(--color-on-accent);
+  --border: var(--color-border);
+  --input: var(--color-field-border);
+  --ring: var(--color-focus);
+  --radius: var(--radius-md);
+
+  --sidebar: var(--color-rail);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-on-accent);
+  --sidebar-accent: var(--color-hover);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus);
 }
 
 :root[data-theme='assembly'] {
@@ -80,6 +193,14 @@
   --color-focus: rgba(75, 243, 200, 0.45);
   --color-glass-highlight: rgba(238, 240, 249, 0.05);
   --glass-blur: none;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--border);
+  }
 }
 
 html,
