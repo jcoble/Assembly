@@ -66,7 +66,10 @@ fn open_panel(
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+    });
 }
 
 #[gpui::test]

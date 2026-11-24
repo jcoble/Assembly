@@ -9,7 +9,6 @@ async-process = "=2.5.0"
 open = "=5.4.5"
 futures-channel = "=0.3.34"
 gpui-kit = { version = "=0.9.0", features = ["profiler", "syntect", "gpui-fast"] }
-gpui-webview = { version = "=0.9.0", features = ["gpui-fast"] }
 wry = { package = "lb-wry", version = "=0.53.3", features = ["transparent"] }
 rust-embed = "=8.13.0"
 mime_guess = "=2.0.5"
