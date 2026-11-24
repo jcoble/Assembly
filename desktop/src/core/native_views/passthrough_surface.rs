@@ -95,6 +95,8 @@ pub enum HybridIpcMessage {
         #[serde(default)]
         machine: Option<String>,
     },
+    /// Opens the native GPUIKit `NewSessionForm` draft composer inside `#native-chat-slot`.
+    NewSession,
 }
 
 /// Full-window transparent `wry::WebView` with selective hit-test pass-through for the Chat hole.
@@ -493,5 +495,8 @@ mod tests {
                 machine: None
             }
         );
+
+        let new_session: HybridIpcMessage = serde_json::from_str(r#"{"t":"new_session"}"#).unwrap();
+        assert_eq!(new_session, HybridIpcMessage::NewSession);
     }
 }

@@ -6,11 +6,23 @@
 import type { ThemeMode } from '$lib/domain/types';
 import { backend } from '$lib/infrastructure/backend';
 
+function unwrapPreferenceValue(raw: unknown): unknown {
+  if (raw && typeof raw === 'object' && 'value' in raw) {
+    return (raw as { value: unknown }).value;
+  }
+  return raw;
+}
+
 class PreferencesStore {
   values = $state<Record<string, unknown>>({});
+  loaded = $state<boolean>(false);
   theme = $state<ThemeMode>('glass');
   private refCount = 0;
   private unsub: (() => void) | null = null;
+
+  get<T = unknown>(key: string): T | undefined {
+    return this.values[key] as T | undefined;
+  }
 
   acquire(): () => void {
     this.refCount += 1;
@@ -19,16 +31,17 @@ class PreferencesStore {
         if (event.type === 'state') {
           const next: Record<string, unknown> = {};
           for (const entry of event.items) {
-            next[entry.key] = entry.item;
+            next[entry.key] = unwrapPreferenceValue(entry.item);
           }
           this.values = next;
+          this.loaded = true;
           this.syncThemeFromValues(next);
         } else if (event.type === 'change') {
           const next = { ...this.values };
           if (event.item === null || event.item === undefined) {
             delete next[event.key];
           } else {
-            next[event.key] = event.item;
+            next[event.key] = unwrapPreferenceValue(event.item);
           }
           this.values = next;
           this.syncThemeFromValues(next);

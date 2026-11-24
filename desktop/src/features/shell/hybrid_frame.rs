@@ -20,6 +20,7 @@ use crate::core::native_views::views::NativeViews;
 use crate::core::theme::look::Look;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::view::session_pane::SessionPane;
+use crate::features::sessions::new_session_form::{Created, DraftEvent, NewSessionForm};
 
 /// True when the user launched Assembly with `ASSEMBLY_HYBRID_SHELL=1` to test the full-window transparent
 /// SvelteKit shell over native GPUIKit Chat.
@@ -35,6 +36,8 @@ const CARD_CORNER_RADIUS: Pixels = px(10.0);
 pub struct HybridFrame {
     /// The real native GPUIKit Chat pane rendered in Layer 1 behind SvelteKit's transparent Chat hole.
     chat: Entity<SessionPane>,
+    /// Active new-session draft shown inside `chat` when triggered by SvelteKit's `+` button.
+    creating: Option<(Entity<NewSessionForm>, [Subscription; 2])>,
     /// The single full-window transparent WebView registered with `NativeViews`.
     webview_id: Option<NativeViewId>,
     /// Current `#native-chat-slot` bounds reported by SvelteKit's `ResizeObserver`.
@@ -65,9 +68,13 @@ impl HybridFrame {
                         }
                     }
                     HybridIpcMessage::SelectSession { id, machine } => {
+                        frame.creating = None;
                         frame.chat.update(cx, |pane, cx| {
                             pane.open_for_hybrid(id, machine, window, cx);
                         });
+                    }
+                    HybridIpcMessage::NewSession => {
+                        frame.show_new_session(window, cx);
                     }
                 });
                 if updated.is_err() {
@@ -78,12 +85,58 @@ impl HybridFrame {
 
         Self {
             chat,
+            creating: None,
             webview_id,
             chat_rect: None,
             should_move: false,
             _ipc,
             _release,
         }
+    }
+
+    /// Shows the native GPUIKit `NewSessionForm` inside the Chat slot (reusing an open draft if one exists).
+    fn show_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let form = match &self.creating {
+            Some((form, _)) => form.clone(),
+            None => {
+                let form = cx.new(|cx| NewSessionForm::in_center(window, cx));
+                let made = cx.subscribe(&form, |frame, form, Created, cx| {
+                    frame.chat.update(cx, |pane, cx| {
+                        pane.clear_draft(form.entity_id(), cx);
+                    });
+                    frame.creating = None;
+                    cx.notify();
+                });
+                let draft = cx.subscribe_in(
+                    &form,
+                    window,
+                    |frame, form, event: &DraftEvent, window, cx| match event {
+                        DraftEvent::Discard => {
+                            frame.chat.update(cx, |pane, cx| {
+                                pane.clear_draft(form.entity_id(), cx);
+                            });
+                            frame.creating = None;
+                            cx.notify();
+                        }
+                        DraftEvent::Failed => {
+                            frame.chat.update(cx, |pane, cx| {
+                                pane.set_draft(form.clone().into(), cx);
+                            });
+                            form.update(cx, |form, cx| form.focus_start(window, cx));
+                            cx.notify();
+                        }
+                    },
+                );
+                self.creating = Some((form.clone(), [made, draft]));
+                form
+            }
+        };
+        SharedWebView::focus_parent(cx);
+        self.chat.update(cx, |pane, cx| {
+            pane.set_draft(form.clone().into(), cx);
+        });
+        form.update(cx, |form, cx| form.focus_start(window, cx));
+        cx.notify();
     }
 
     /// Native macOS titlebar drag strip rendered in Layer 1 behind SvelteKit's top chrome. Only clicks inside

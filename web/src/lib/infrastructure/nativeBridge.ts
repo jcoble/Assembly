@@ -62,6 +62,10 @@ export function selectNativeChatSession(id: string, machine?: string | null): vo
   });
 }
 
+export function openNativeNewSession(): void {
+  postHybridIpc({ t: 'new_session' });
+}
+
 export interface NativeSlotBridge {
   setChatSlotElement: (el: HTMLElement | null) => void;
   syncNow: () => void;

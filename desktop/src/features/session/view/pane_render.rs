@@ -101,6 +101,7 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.draft = None;
         self.uncover_route(route_machine.as_deref(), &id);
         self.request_current_route(
             route_machine,
@@ -110,6 +111,24 @@ impl SessionPane {
             window,
             cx,
         );
+    }
+
+    /// Shows a new-session draft directly inside this pane (used by `HybridFrame`, which has no `CenterPanes`).
+    pub fn set_draft(&mut self, draft: AnyView, cx: &mut Context<Self>) {
+        self.draft = Some(draft);
+        cx.notify();
+    }
+
+    /// Clears `draft` if it is currently shown in this pane.
+    pub fn clear_draft(&mut self, draft: EntityId, cx: &mut Context<Self>) {
+        if self
+            .draft
+            .as_ref()
+            .is_some_and(|shown| shown.entity_id() == draft)
+        {
+            self.draft = None;
+            cx.notify();
+        }
     }
 }
 
