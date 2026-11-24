@@ -62,16 +62,18 @@ pub struct HoleGeometry {
     pub hole: Option<LogicalRect>,
     /// Floating SvelteKit popups, menus, dialogs, or modal backdrops that must intercept clicks over Chat.
     pub occluders: Vec<LogicalRect>,
+    /// Empty top-bar window-drag strips (`[data-window-drag-region]`) that pass clicks straight through
+    /// to GPUI's native macOS titlebar drag handler for zero-lag window movement and double-click zoom.
+    pub drag_rects: Vec<LogicalRect>,
 }
 
 impl HoleGeometry {
     /// True when a pointer at window top-left logical `(x, y)` should pass through the transparent
-    /// `WKWebView` directly to the native GPUIKit `SessionPane` underneath.
+    /// `WKWebView` directly to GPUI underneath (either the native `SessionPane` or a titlebar drag strip).
     pub fn passes_through(&self, x: f64, y: f64) -> bool {
-        let Some(hole) = self.hole else {
-            return false;
-        };
-        hole.contains(x, y) && !self.occluders.iter().any(|rect| rect.contains(x, y))
+        let in_hole = self.hole.is_some_and(|hole| hole.contains(x, y));
+        let in_drag = self.drag_rects.iter().any(|rect| rect.contains(x, y));
+        (in_hole || in_drag) && !self.occluders.iter().any(|rect| rect.contains(x, y))
     }
 }
 
@@ -79,11 +81,13 @@ impl HoleGeometry {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum HybridIpcMessage {
-    /// Updates the transparent Chat slot bounds and any floating SvelteKit overlays occluding it.
+    /// Updates the transparent Chat slot bounds, floating SvelteKit overlays, and top-bar drag strips.
     Slot {
         hole: Option<LogicalRect>,
         #[serde(default)]
         occluders: Vec<LogicalRect>,
+        #[serde(default)]
+        drag_rects: Vec<LogicalRect>,
     },
     /// Tells native GPUIKit `SessionPane` to open the session picked in SvelteKit's sidebar.
     SelectSession {
@@ -130,15 +134,22 @@ impl PassthroughSurface {
             let Ok(message) = serde_json::from_str::<HybridIpcMessage>(request.body()) else {
                 return;
             };
-            // Update `hitTest:` state synchronously so popups and resizes take effect immediately.
-            if let HybridIpcMessage::Slot { hole, occluders } = &message
+            // Update `hitTest:` state synchronously so popups, drag strips, and resizes take effect immediately.
+            if let HybridIpcMessage::Slot {
+                hole,
+                occluders,
+                drag_rects,
+            } = &message
                 && let Ok(mut guard) = ipc_geometry.lock()
             {
                 if debug_enabled() {
-                    eprintln!("[hybrid] slot update: hole={hole:?} occluders={occluders:?}");
+                    eprintln!(
+                        "[hybrid] slot update: hole={hole:?} occluders={occluders:?} drag_rects={drag_rects:?}"
+                    );
                 }
                 guard.hole = *hole;
                 guard.occluders = occluders.clone();
+                guard.drag_rects = drag_rects.clone();
             }
             let _ = ipc_tx.unbounded_send(message);
         });
@@ -439,12 +450,20 @@ mod tests {
         let geometry = HoleGeometry {
             hole: Some(hole),
             occluders: vec![popup],
+            drag_rects: vec![LogicalRect {
+                x: 420.0,
+                y: 0.0,
+                width: 300.0,
+                height: 44.0,
+            }],
         };
 
         // Inside left SvelteKit sidebar -> stays in WKWebView.
         assert!(!geometry.passes_through(100.0, 200.0));
-        // Inside top bar -> stays in WKWebView.
-        assert!(!geometry.passes_through(500.0, 20.0));
+        // Inside top bar button area (outside drag strip) -> stays in WKWebView.
+        assert!(!geometry.passes_through(120.0, 20.0));
+        // Inside empty top bar drag strip -> passes through to GPUI native window drag.
+        assert!(geometry.passes_through(500.0, 20.0));
         // Inside unoccluded Chat hole -> passes straight through to GPUI SessionPane!
         assert!(geometry.passes_through(700.0, 400.0));
         // Inside SvelteKit dropdown floating OVER Chat -> stays in WKWebView!
@@ -458,11 +477,11 @@ mod tests {
     #[test]
     fn parses_slot_and_select_session_ipc_messages() {
         let slot: HybridIpcMessage = serde_json::from_str(
-            r#"{"t":"slot","hole":{"x":240,"y":48,"width":600,"height":500},"occluders":[{"x":300,"y":50,"width":200,"height":150}]}"#,
+            r#"{"t":"slot","hole":{"x":240,"y":48,"width":600,"height":500},"occluders":[{"x":300,"y":50,"width":200,"height":150}],"drag_rects":[{"x":420,"y":0,"width":240,"height":44}]}"#,
         )
         .unwrap();
         assert!(
-            matches!(slot, HybridIpcMessage::Slot { hole: Some(_), occluders } if occluders.len() == 1)
+            matches!(slot, HybridIpcMessage::Slot { hole: Some(_), occluders, drag_rects } if occluders.len() == 1 && drag_rects.len() == 1)
         );
 
         let pick: HybridIpcMessage =

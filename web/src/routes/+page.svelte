@@ -6,11 +6,19 @@
   import { sessionsStore } from '$lib/application/sessions.svelte';
   import { workspaceStore } from '$lib/application/workspace.svelte';
   import RightPanel from '$lib/features/shell/RightPanel.svelte';
+  import SplitSash from '$lib/features/shell/SplitSash.svelte';
+  import StatusStrip from '$lib/features/shell/StatusStrip.svelte';
   import TopBar from '$lib/features/shell/TopBar.svelte';
   import type { NativeSlotBridge } from '$lib/infrastructure/nativeBridge';
 
   const nativeBridge = getContext<NativeSlotBridge>('native-slot-bridge');
   let chatSlotEl = $state<HTMLDivElement | null>(null);
+  let centerAreaEl = $state<HTMLElement | null>(null);
+
+  // Drag baselines captured on pointerdown for smooth zero-drift resizing.
+  let dragStartRailWidth = 0;
+  let dragStartRightWidth = 0;
+  let dragStartChatRatio = 0.46;
 
   const chatVisible = $derived(
     workspaceStore.homeOverlay === 'none' && !workspaceStore.secondaryExpanded
@@ -42,9 +50,9 @@
   <TopBar />
 
   <div class="body-row">
-    <!-- Left Sessions Rail (1:1 structure: header + Provider/Status/Location pills + sessions list) -->
+    <!-- Left Sessions Rail Card (Pilot Lane A replaces inner body next) -->
     {#if workspaceStore.railOpen}
-      <aside class="rail" style:width={`${workspaceStore.railWidth}px`}>
+      <aside class="rail-card" style:width={`${workspaceStore.railWidth}px`}>
         <div class="rail-header">
           <span class="rail-title">Sessions</span>
           <div class="rail-actions">
@@ -87,12 +95,18 @@
           {/if}
         </div>
       </aside>
+
+      <SplitSash
+        ariaLabel="Resize sessions sidebar"
+        onDragStart={() => (dragStartRailWidth = workspaceStore.railWidth)}
+        onDragDelta={(dx) => workspaceStore.setRailWidth(dragStartRailWidth + dx)}
+      />
     {/if}
 
-    <!-- Center Workspace: Live GPUIKit Chat + Optional Side-by-Side Split Secondary Chrome Pane -->
-    <main class="center-area">
+    <!-- Center Workspace: Live GPUIKit Chat Card + Optional Side-by-Side Split Secondary Card -->
+    <main class="center-area" bind:this={centerAreaEl}>
       {#if workspaceStore.homeOverlay !== 'none'}
-        <section class="overlay-surface">
+        <section class="overlay-card">
           <h2>{workspaceStore.homeOverlay}</h2>
           <p class="muted">Wave 1 lane mounts here (1:1 port of old app).</p>
           <button
@@ -109,16 +123,33 @@
             id="native-chat-slot"
             class="native-chat-slot"
             class:split={workspaceStore.hasSecondaryPane}
+            style:flex={workspaceStore.hasSecondaryPane
+              ? `0 0 ${(workspaceStore.chatSplitRatio * 100).toFixed(2)}%`
+              : '1 1 0%'}
             bind:this={chatSlotEl}
           ></div>
         {/if}
 
+        {#if chatVisible && workspaceStore.hasSecondaryPane && workspaceStore.activeSecondaryTab}
+          <SplitSash
+            ariaLabel="Resize chat and secondary pane"
+            onDragStart={() => (dragStartChatRatio = workspaceStore.chatSplitRatio)}
+            onDragDelta={(dx) => {
+              const width = centerAreaEl?.clientWidth ?? 0;
+              if (width > 120) {
+                workspaceStore.setChatSplitRatio(dragStartChatRatio + dx / width);
+              }
+            }}
+          />
+        {/if}
+
         {#if workspaceStore.hasSecondaryPane && workspaceStore.activeSecondaryTab}
-          <section class="secondary-pane">
+          <section class="secondary-card">
             <div class="secondary-placeholder">
               <h3>{workspaceStore.activeSecondaryTab.title}</h3>
               <p class="muted">
-                Side-by-side split pane (`{workspaceStore.activeSecondaryTab.kind}`) — Wave 1 lane mounts here while native GPUIKit Chat stays live on the left.
+                Side-by-side split pane (`{workspaceStore.activeSecondaryTab.kind}`) — Wave 1 lane
+                mounts here while native GPUIKit Chat stays live on the left.
               </p>
             </div>
           </section>
@@ -126,35 +157,30 @@
       {/if}
     </main>
 
-    <!-- Right Panel (4 hanging core icons + `...` overflow + `×`) -->
+    <!-- Right Panel Card (4 hanging core icons + `...` overflow + `×`) -->
     {#if workspaceStore.rightPanelOpen}
-      <RightPanel />
+      <SplitSash
+        ariaLabel="Resize right panel"
+        onDragStart={() => (dragStartRightWidth = workspaceStore.rightPanelWidth)}
+        onDragDelta={(dx) => workspaceStore.setRightPanelWidth(dragStartRightWidth - dx)}
+      />
+
+      <div class="right-column" style:width={`${workspaceStore.rightPanelWidth}px`}>
+        <RightPanel />
+      </div>
     {/if}
   </div>
 
-  <!-- Bottom Utility Strip (1:1 with old app footer) -->
-  <footer class="status-strip">
-    <div class="strip-left">
-      <span class="status-dot" class:ok={connectionStore.status === 'connected'}></span>
-      <span>
-        {connectionStore.status === 'connected'
-          ? `Connected :${connectionStore.snapshot.port}`
-          : connectionStore.status}
-      </span>
-      <span class="muted">· Sessions {sessionsStore.list.length}</span>
-    </div>
-    <div class="strip-right muted">
-      <span>Remote · Usage</span>
-    </div>
-  </footer>
+  <!-- Exact 1:1 Bottom Utility Strip (Settings · Resources · Machine · Usage) -->
+  <StatusStrip />
 </div>
 
 <style>
   .workbench {
     display: flex;
     flex-direction: column;
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: 100%;
     background: transparent;
     overflow: hidden;
   }
@@ -163,14 +189,17 @@
     display: flex;
     flex: 1;
     min-height: 0;
+    padding: 0 6px;
     background: transparent;
   }
 
-  .rail {
+  .rail-card {
     display: flex;
     flex-direction: column;
     background: var(--color-rail);
-    border-right: 1px solid var(--color-border);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
     flex-shrink: 0;
     min-height: 0;
   }
@@ -291,24 +320,23 @@
   }
 
   .native-chat-slot {
-    flex: 1;
     min-width: 280px;
     min-height: 0;
     background: transparent;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
     pointer-events: none;
   }
 
-  .native-chat-slot.split {
-    flex: 0 0 42%;
-    border-right: 1px solid var(--color-border);
-  }
-
-  .secondary-pane,
-  .overlay-surface {
+  .secondary-card,
+  .overlay-card {
     flex: 1;
     min-width: 0;
     min-height: 0;
     background: var(--color-surface-solid);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -325,6 +353,12 @@
     gap: 6px;
   }
 
+  .right-column {
+    flex-shrink: 0;
+    min-height: 0;
+    height: 100%;
+  }
+
   .return-btn {
     height: 30px;
     padding: 0 12px;
@@ -334,37 +368,6 @@
     color: var(--color-text);
     font-size: 12px;
     cursor: pointer;
-  }
-
-  .status-strip {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 24px;
-    padding: 0 10px;
-    background: var(--color-bg);
-    border-top: 1px solid var(--color-border);
-    font-size: 11px;
-    color: var(--color-text-2);
-    flex-shrink: 0;
-  }
-
-  .strip-left,
-  .strip-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-text-3);
-  }
-
-  .status-dot.ok {
-    background: var(--color-good);
   }
 
   .empty-hint {

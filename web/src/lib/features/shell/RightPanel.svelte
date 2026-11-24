@@ -42,7 +42,7 @@
   );
 </script>
 
-<aside class="right-panel glass-panel" style:width={`${workspaceStore.rightPanelWidth}px`}>
+<aside class="right-panel card-panel">
   <!-- 4 hanging icon tabs (Files, Git, Agents, Tasks) + `...` overflow + `×` close (matches old app 1:1) -->
   <div class="right-header">
     <div class="core-tabs">
@@ -120,8 +120,12 @@
   .right-panel {
     display: flex;
     flex-direction: column;
-    border-left: 1px solid var(--color-border);
-    flex-shrink: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
     min-height: 0;
   }
 

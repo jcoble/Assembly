@@ -30,7 +30,7 @@ pub(super) const APP_ORIGIN: &str = "app://localhost/";
 #[folder = "../web/build"]
 struct FrontendAssets;
 
-/// Resolves the hybrid shell URL: `ASSEMBLY_WEBVIEW_URL` (or Vite `127.0.0.1:5177/`) in debug
+/// Resolves the hybrid shell URL: `ASSEMBLY_WEBVIEW_URL` (or Vite `127.0.0.1:5180/`) in debug
 /// builds, and `app://localhost/` in release builds.
 pub(super) fn hybrid_url() -> String {
     #[cfg(debug_assertions)]

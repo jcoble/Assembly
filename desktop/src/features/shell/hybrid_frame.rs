@@ -29,6 +29,9 @@ pub fn enabled() -> bool {
         .is_some_and(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes"))
 }
 
+const TOP_BAR_DRAG_HEIGHT: Pixels = px(56.0);
+const CARD_CORNER_RADIUS: Pixels = px(10.0);
+
 pub struct HybridFrame {
     /// The real native GPUIKit Chat pane rendered in Layer 1 behind SvelteKit's transparent Chat hole.
     chat: Entity<SessionPane>,
@@ -36,6 +39,8 @@ pub struct HybridFrame {
     webview_id: Option<NativeViewId>,
     /// Current `#native-chat-slot` bounds reported by SvelteKit's `ResizeObserver`.
     chat_rect: Option<Bounds<Pixels>>,
+    /// Armed on a left mouse-down inside an empty top-bar drag strip so the next move starts a macOS window drag.
+    should_move: bool,
     /// Processes `window.ipc.postMessage` slot and session-selection messages; dropped with the frame.
     _ipc: Task<()>,
     /// Releases the shared WebView handle cleanly before window teardown.
@@ -75,9 +80,45 @@ impl HybridFrame {
             chat,
             webview_id,
             chat_rect: None,
+            should_move: false,
             _ipc,
             _release,
         }
+    }
+
+    /// Native macOS titlebar drag strip rendered in Layer 1 behind SvelteKit's top chrome. Only clicks inside
+    /// SvelteKit's `[data-window-drag-region]` spacers pass through `PassthroughSurface::hitTest:` to reach it.
+    fn titlebar_drag_strip(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("hybrid-titlebar-drag")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(TOP_BAR_DRAG_HEIGHT)
+            .when(cfg!(target_os = "macos"), |area| {
+                area.window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|frame, _, _, _| frame.should_move = true),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|frame, _, _, _| frame.should_move = false),
+                    )
+                    .on_mouse_down_out(cx.listener(|frame, _, _, _| frame.should_move = false))
+                    .on_mouse_move(cx.listener(|frame, _, window, _| {
+                        if frame.should_move {
+                            frame.should_move = false;
+                            window.start_window_move();
+                        }
+                    }))
+                    .on_click(|event, window, _| {
+                        if event.click_count() == 2 {
+                            window.titlebar_double_click();
+                        }
+                    })
+            })
     }
 }
 
@@ -87,12 +128,15 @@ impl Render for HybridFrame {
         div()
             .size_full()
             .relative()
-            .bg(look.tile)
+            // Match SvelteKit's dark outer canvas (`--color-canvas`) so panel gutters and rounded Chat corners blend seamlessly.
+            .bg(rgb(0x000000))
             // Record full-window bounds for the transparent WKWebView BEFORE painting Chat so nothing sits above
             // Chat in GPUI's element/hitbox order.
             .when_some(self.webview_id, |root, id| {
                 root.child(div().absolute().inset_0().child(NativeViews::host(id)))
             })
+            // Native macOS window drag + double-click zoom target for empty top-bar spacers.
+            .child(self.titlebar_drag_strip(cx))
             // Layer 1 (back): native GPUIKit SessionPane positioned in SvelteKit's transparent Chat slot.
             // `capture_any_mouse_down` runs before children (such as the Composer input) stop propagation so clicking
             // anywhere in Chat always hands AppKit firstResponder back from WKWebView to GPUIView.
@@ -104,6 +148,7 @@ impl Render for HybridFrame {
                         .top(rect.origin.y)
                         .w(rect.size.width)
                         .h(rect.size.height)
+                        .rounded(CARD_CORNER_RADIUS)
                         .overflow_hidden()
                         .bg(look.tile)
                         .capture_any_mouse_down(|_, _, cx| {

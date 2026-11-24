@@ -27,20 +27,27 @@ export {
   type SecondaryTabKind
 };
 
+export type UtilityPopoverId = 'resources' | 'usage';
+
 class WorkspaceStore {
   railOpen = $state<boolean>(true);
-  railWidth = $state<number>(260);
+  railWidth = $state<number>(268);
 
   /** Secondary chrome tabs opened beside live GPUIKit Chat via `+` or clicking a file/diff/PR. */
   secondaryTabs = $state<SecondaryTab[]>([]);
   activeSecondaryTabId = $state<string | null>(null);
   secondaryExpanded = $state<boolean>(false);
+  /** Fractional width of live GPUIKit Chat when a secondary split tab is open beside it. */
+  chatSplitRatio = $state<number>(0.46);
 
   /** Full-center modal/page overlays like Home/Projects/Settings/Board when triggered from Home. */
   homeOverlay = $state<'none' | 'projects' | 'settings' | 'board'>('none');
 
+  /** Active bottom-bar utility popover (`resources` or `usage`). */
+  openUtility = $state<UtilityPopoverId | null>(null);
+
   rightPanelOpen = $state<boolean>(true);
-  rightPanelWidth = $state<number>(308);
+  rightPanelWidth = $state<number>(318);
   activeRightTab = $state<RightPanelTabId>('files');
 
   get hasSecondaryPane(): boolean {
@@ -50,6 +57,26 @@ class WorkspaceStore {
   get activeSecondaryTab(): SecondaryTab | null {
     if (!this.activeSecondaryTabId) return null;
     return this.secondaryTabs.find((t) => t.id === this.activeSecondaryTabId) ?? null;
+  }
+
+  setRailWidth(width: number): void {
+    this.railWidth = Math.round(Math.min(540, Math.max(210, width)));
+  }
+
+  setRightPanelWidth(width: number): void {
+    this.rightPanelWidth = Math.round(Math.min(720, Math.max(240, width)));
+  }
+
+  setChatSplitRatio(ratio: number): void {
+    this.chatSplitRatio = Math.min(0.75, Math.max(0.25, ratio));
+  }
+
+  toggleUtility(id: UtilityPopoverId): void {
+    this.openUtility = this.openUtility === id ? null : id;
+  }
+
+  closeUtility(): void {
+    this.openUtility = null;
   }
 
   openSecondaryTab(kind: SecondaryTabKind, title: string, filePath?: string): void {

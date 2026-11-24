@@ -23,6 +23,8 @@ const OCCLUDER_SELECTOR = [
   '[data-popover-content]'
 ].join(',');
 
+const DRAG_REGION_SELECTOR = '[data-window-drag-region]';
+
 function toSlotRect(rect: DOMRect): SlotRect | null {
   if (rect.width <= 0 || rect.height <= 0) return null;
   return {
@@ -33,9 +35,9 @@ function toSlotRect(rect: DOMRect): SlotRect | null {
   };
 }
 
-function collectOccluders(): SlotRect[] {
+function collectRects(selector: string): SlotRect[] {
   const results: SlotRect[] = [];
-  const nodes = document.querySelectorAll<HTMLElement>(OCCLUDER_SELECTOR);
+  const nodes = document.querySelectorAll<HTMLElement>(selector);
   for (const el of nodes) {
     const style = getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') {
@@ -75,8 +77,9 @@ export function createNativeSlotBridge(): NativeSlotBridge {
 
   function emit(): void {
     const hole = slotEl ? toSlotRect(slotEl.getBoundingClientRect()) : null;
-    const occluders = hole ? collectOccluders() : [];
-    const payload = JSON.stringify({ t: 'slot', hole, occluders });
+    const occluders = collectRects(OCCLUDER_SELECTOR);
+    const drag_rects = collectRects(DRAG_REGION_SELECTOR);
+    const payload = JSON.stringify({ t: 'slot', hole, occluders, drag_rects });
     if (payload === lastPayload) return;
     lastPayload = payload;
     if (typeof window !== 'undefined' && window.ipc?.postMessage) {
@@ -130,7 +133,7 @@ export function createNativeSlotBridge(): NativeSlotBridge {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', onWindowResize);
       }
-      postHybridIpc({ t: 'slot', hole: null, occluders: [] });
+      postHybridIpc({ t: 'slot', hole: null, occluders: [], drag_rects: [] });
     }
   };
 }

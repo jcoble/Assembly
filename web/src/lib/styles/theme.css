@@ -11,13 +11,15 @@
 
 :root,
 :root[data-theme='glass'] {
+  /* Outer dark canvas behind rounded panel cards (matches GPUI HybridFrame canvas 1:1) */
+  --color-canvas: #000000;
   /* Tightened Spotify surface ladder infused with macOS Glass translucency */
-  --color-bg: rgba(12, 13, 17, 0.92);
-  --color-surface: rgba(20, 22, 28, 0.84);
-  --color-surface-solid: #16181f;
-  --color-elevated: rgba(34, 37, 46, 0.76);
-  --color-rail: rgba(17, 19, 24, 0.88);
-  --color-overlay: rgba(28, 31, 39, 0.92);
+  --color-bg: #000000;
+  --color-surface: #14161b;
+  --color-surface-solid: #14161b;
+  --color-elevated: rgba(34, 37, 46, 0.86);
+  --color-rail: #121418;
+  --color-overlay: rgba(28, 31, 39, 0.94);
   --color-glass-highlight: rgba(255, 255, 255, 0.07);
   --glass-blur: blur(22px) saturate(165%);
 

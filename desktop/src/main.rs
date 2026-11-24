@@ -190,7 +190,9 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                             _ = socket.set(client.clone());
                             Sessions::start(cx);
                             Machines::start(cx);
-                            features::remote_install::updates::tell_when_behind(cx);
+                            if !features::shell::hybrid_frame::enabled() {
+                                features::remote_install::updates::tell_when_behind(cx);
+                            }
                             Preferences::start(cx);
                             if let Some(connected) = connected.take() {
                                 _ = connected.send(client);

@@ -45,10 +45,13 @@
         return FileCode2;
     }
   }
+  const leftSpacerWidth = $derived(
+    workspaceStore.railOpen ? Math.max(12, workspaceStore.railWidth - 110) : 12
+  );
 </script>
 
 <header class="topbar">
-  <!-- Left: traffic-light clearance + green circular Home button with hover-expand pill -->
+  <!-- Left: macOS traffic-light clearance (88px) + green circular Home button with hover-expand pill -->
   <div class="topbar-left">
     <div
       class="home-pill"
@@ -98,6 +101,14 @@
       {/if}
     </div>
   </div>
+
+  <!-- Draggable empty top-bar spacer aligned with left rail width -->
+  <div
+    class="drag-spacer drag-spacer-left"
+    style:width={`${leftSpacerWidth}px`}
+    data-window-drag-region
+    aria-hidden="true"
+  ></div>
 
   <!-- Center-left: Active Chat session tab ONLY (matches old app 1:1) -->
   <div class="chat-tab-group">
@@ -172,6 +183,9 @@
         {/if}
       </div>
     {/if}
+
+    <!-- Native macOS window drag spacer occupying remaining empty titlebar width -->
+    <div class="drag-spacer drag-spacer-flex" data-window-drag-region aria-hidden="true"></div>
   </div>
 
   <!-- Right controls: Needs badge (when active), `+` (when no split tabs open), expand, right-panel toggle -->
@@ -247,11 +261,24 @@
     display: flex;
     align-items: center;
     height: var(--top-bar-height);
-    padding: 0 10px 0 74px;
-    background: var(--color-bg);
-    border-bottom: 1px solid var(--color-border);
-    gap: 10px;
+    padding: 0 10px 0 88px;
+    background: var(--color-canvas);
+    gap: 8px;
     flex-shrink: 0;
+    user-select: none;
+  }
+
+  .drag-spacer {
+    height: 100%;
+    min-width: 12px;
+  }
+
+  .drag-spacer-left {
+    flex-shrink: 0;
+  }
+
+  .drag-spacer-flex {
+    flex: 1;
   }
 
   .topbar-left {
@@ -310,7 +337,6 @@
   .chat-tab-group {
     display: flex;
     align-items: center;
-    margin-left: 112px;
     flex-shrink: 0;
   }
 
