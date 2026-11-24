@@ -84,12 +84,32 @@ impl SessionPane {
     }
 
     /// Only the navigator commits prepared rows; selection notifications never start another open.
-    pub(super) fn chat(
+    pub(crate) fn chat(
         client: Rc<dyn SessionClient>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         SessionPane::new(client, window, cx)
+    }
+
+    /// Opens a session directly from the hybrid SvelteKit sidebar (`ASSEMBLY_HYBRID_SHELL=1`) without going through
+    /// `CenterPanes`.
+    pub fn open_for_hybrid(
+        &mut self,
+        id: String,
+        route_machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.uncover_route(route_machine.as_deref(), &id);
+        self.request_current_route(
+            route_machine,
+            id,
+            uuid::Uuid::new_v4().to_string(),
+            crate::core::intents::session_open::SessionOpenTarget::Engine,
+            window,
+            cx,
+        );
     }
 }
 

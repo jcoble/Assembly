@@ -46,10 +46,6 @@ impl Global for NativeViews {}
 
 impl NativeViews {
     /// Takes a new surface, hidden until its host lays out.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the terminal and browser surfaces open views")
-    )]
     pub(super) fn open(&mut self, mut surface: Box<dyn NativeSurface>) -> NativeViewId {
         surface.place(None);
         self.next_id += 1;
@@ -59,7 +55,6 @@ impl NativeViews {
     }
 
     /// The element a pane draws where its native view goes: empty, filling the pane, recording its bounds.
-    #[expect(dead_code, reason = "the terminal and browser panes draw it")]
     pub fn host(id: NativeViewId) -> impl IntoElement {
         div().size_full().on_prepaint(move |bounds, window, cx| {
             let visible = bounds.intersect(&window.content_mask().bounds);
@@ -115,7 +110,6 @@ impl NativeViews {
     }
 
     /// The view's pane was removed: the view is hidden and released.
-    #[expect(dead_code, reason = "the terminal and browser panes close their views")]
     pub fn close(id: NativeViewId, cx: &mut App) {
         cx.default_global::<Self>().remove(id);
     }
@@ -129,7 +123,8 @@ impl NativeViews {
 
     fn end_frame(&mut self, covered: bool) {
         for (view, surface) in self.views.values_mut() {
-            if let Some(frame) = view.end_frame(covered) {
+            let hide_for_overlay = covered && !surface.composites_under_overlays();
+            if let Some(frame) = view.end_frame(hide_for_overlay) {
                 surface.place(frame);
             }
         }

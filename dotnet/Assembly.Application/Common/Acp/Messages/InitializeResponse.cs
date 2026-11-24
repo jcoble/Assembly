@@ -16,12 +16,17 @@ public sealed record InitializeResponse(
 
     /// <summary>
     /// How a message reaches a running turn: <c>_session/steering</c> when <c>_meta.steering.supported</c>, else a
-    /// <c>session/prompt</c> sent mid-turn when <c>capabilities._meta.claudeCode.promptQueueing</c>, else not at all.
+    /// <c>session/prompt</c> sent mid-turn when <c>capabilities._meta.claudeCode.promptQueueing</c> or when the
+    /// stock ACP v2 <c>@agentclientprotocol/claude-agent-acp</c> adapter (0.110+) omits that legacy flag, else not at all.
     /// </summary>
     [JsonIgnore]
     public SteerRoute Steering =>
         IsTrue(Meta, "steering", "supported") ? SteerRoute.SteeringCall
         : IsTrue(Capabilities, "_meta", "claudeCode", "promptQueueing") ? SteerRoute.PromptQueue
+        : ProtocolVersion >= 2
+          && string.Equals(Info?.Name, "@agentclientprotocol/claude-agent-acp", StringComparison.Ordinal)
+          && !IsFalse(Capabilities, "_meta", "claudeCode", "promptQueueing")
+            ? SteerRoute.PromptQueue
         : SteerRoute.None;
 
     [JsonIgnore]
@@ -53,5 +58,13 @@ public sealed record InitializeResponse(
         foreach (var name in path)
             if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(name, out node)) return false;
         return node.ValueKind == JsonValueKind.True;
+    }
+
+    private static bool IsFalse(JsonElement? root, params string[] path)
+    {
+        if (root is not { } node) return false;
+        foreach (var name in path)
+            if (node.ValueKind != JsonValueKind.Object || !node.TryGetProperty(name, out node)) return false;
+        return node.ValueKind == JsonValueKind.False;
     }
 }

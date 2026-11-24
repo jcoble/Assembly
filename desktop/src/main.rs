@@ -116,8 +116,14 @@ fn main() {
             gpui_kit::open_window(options, cx, |window, cx| {
                 theme::set(ThemeId::DEFAULT, window, cx);
                 features::workspaces::drafts_guard::guard_close(window, cx);
-                let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
-                cx.new(|cx| WindowRoot::new(frame, window, cx))
+                let content: AnyView = if features::shell::hybrid_frame::enabled() {
+                    cx.new(|cx| features::shell::hybrid_frame::HybridFrame::new(window, cx))
+                        .into()
+                } else {
+                    cx.new(|cx| Frame::new(read_layout, write_layout, window, cx))
+                        .into()
+                };
+                cx.new(|cx| WindowRoot::new(content, window, cx))
             })
             .expect("open the window");
             Launcher::tell_if_update_finishing(cx);
@@ -163,6 +169,10 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                 config,
                 move |port, token, cx| {
                     let endpoint = Endpoint { port, token };
+                    crate::core::native_views::shared_webview::SharedWebView::set_backend(
+                        endpoint.clone(),
+                        cx,
+                    );
                     match socket.get() {
                         Some(client) => {
                             if let Some(bulk) = SocketClient::try_bulk(cx) {

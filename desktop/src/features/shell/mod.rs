@@ -6,6 +6,7 @@ pub mod default_layout;
 mod drag_chip;
 mod drawer_buttons;
 pub mod frame;
+pub mod hybrid_frame;
 pub mod layout_store;
 pub mod motion_skin;
 pub mod placeholder_pane;
