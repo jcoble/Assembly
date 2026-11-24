@@ -1,5 +1,5 @@
 // The one lane resource lifecycle, called by lane.sh and workbox.sh. Existing unmarked folders are never adopted/deleted.
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import { hostname, homedir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,11 +8,29 @@ import { lane, type Lane } from './dev-remote-identity.ts';
 import { command, quote, sshOptions } from './dev-remote-process.ts';
 import { profileFor, safePath } from './seed-dev.ts';
 
+export const MAC_EXTERNAL_LANES_ROOT = '/Volumes/Files/assembly-worktrees';
+
+export function lanesBaseDir(home = homedir()): string {
+  if (process.env.ASSEMBLY_WORKTREES_DIR) return resolve(process.env.ASSEMBLY_WORKTREES_DIR);
+  if (process.platform === 'darwin' && home.startsWith('/Users/') && existsSync('/Volumes/Files')) {
+    return MAC_EXTERNAL_LANES_ROOT;
+  }
+  return join(home, 'dev/work/worktrees/Assembly');
+}
+
+export function laneDataDir(root: string, dataName: string, laneName: string, home = homedir()): string {
+  if (root.startsWith(MAC_EXTERNAL_LANES_ROOT + '/')) {
+    return join(MAC_EXTERNAL_LANES_ROOT, '.lane-data', laneName);
+  }
+  return join(home, dataName);
+}
+
 export type LaneOwner = { version: 1; name: string; number: number; owner: string; host: string; worktree: string; remoteOwner?: LaneOwner };
 export function validateOwner(owner: LaneOwner, root: string, home: string) {
   const target = lane(owner.name, owner.number);
+  const allowed = [join(lanesBaseDir(home), owner.name), join(home, 'dev/work/worktrees/Assembly', owner.name)];
   if (owner.version !== 1 || !/^[a-f0-9-]{36}$/.test(owner.owner) || !owner.host
-    || owner.worktree !== join(home, 'dev/work/worktrees/Assembly', owner.name) || root !== owner.worktree)
+    || !allowed.includes(owner.worktree) || root !== owner.worktree)
     throw Error('lane ownership is not derived from this checkout; copied lanes cannot clean shared resources');
   return target;
 }
@@ -139,7 +157,7 @@ export async function cleanLane(root: string, staleStart = false, home = homedir
     }
   }
   const profile = staleStart ? join(home, 'assembly-dev/worktrees', name + '-' + (await import('node:crypto')).createHash('sha256').update(root).digest('hex').slice(0, 16)) : profileFor(root, home).home;
-  const data = join(home, target.data), token = join(home, '.config', target.data);
+  const data = laneDataDir(root, target.data, name, home), token = join(home, '.config', target.data);
   for (const file of ['launcher.lock', 'backend.lock.pid']) {
     try {
       const text = await fs.readFile(join(profile, file), 'utf8');

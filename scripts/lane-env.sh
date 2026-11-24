@@ -19,7 +19,14 @@ suffix=${LANE_NAME:+-$LANE_NAME}
 DESKTOP_PORT=$((18797 + LANE_NUMBER * 10))   # the desktop backend
 DEV_PORT=$((1430 + LANE_NUMBER))         # vite dev
 BOX_PORT=$((9797 + LANE_NUMBER * 10))    # the box host; the desktop reaches it on BOX_PORT + 10000
-DATA=$HOME/assembly-dotnet$suffix        # the desktop's data: mac/ (database, sessions, logs, the bundle; mac/ kept its old name)
+if [ -n "$LANE_NAME" ] && [[ "$root" == /Volumes/Files/assembly-worktrees/* ]]; then
+  DATA="/Volumes/Files/assembly-worktrees/.lane-data/$LANE_NAME"
+else
+  DATA=$HOME/assembly-dotnet$suffix      # the desktop's data: mac/ (database, sessions, logs, the bundle; mac/ kept its old name)
+fi
+if [ -f "$root/.lane" ] && [ -d "$HOME/.config/gh-agents" ]; then
+  export GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh-agents}"
+fi
 TOKEN_FILE=$HOME/.config/assembly-dotnet$suffix/env
 BOX_DATA=assembly-dotnet$suffix          # on the box, under its home: serve/, bin/
 BOX_TOKEN_FILE=.config/assembly-dotnet$suffix/env

@@ -20,7 +20,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       full: ${{ steps.jobs.outputs.full }}
+      web: ${{ steps.jobs.outputs.web }}
+      desktop: ${{ steps.jobs.outputs.desktop }}
       backend: ${{ steps.jobs.outputs.backend }}
+      scripts: ${{ steps.jobs.outputs.scripts }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +38,24 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci-changes.ts
+  web:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web check
+      - run: pnpm --dir web build
   dotnet:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend == 'true') }}
@@ -76,7 +97,7 @@ jobs:
     # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
     # runs in lint.
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -91,6 +112,7 @@ jobs:
             ~/.cargo/git
             desktop/target
           key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock', 'desktop/rust-toolchain.toml') }}
+          restore-keys: desktop-${{ runner.os }}-
       # Installs the toolchain and components desktop/rust-toolchain.toml names.
       - run: rustup toolchain install
       # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
@@ -127,7 +149,7 @@ jobs:
         run: cargo fmt --check
   scripts:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
