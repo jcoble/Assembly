@@ -365,10 +365,10 @@
   .secondary-strip {
     display: flex;
     align-items: center;
+    height: 100%;
     gap: 4px;
     flex: 1;
     min-width: 0;
-    margin-left: 12px;
   }
 
   .chrome-tab {
