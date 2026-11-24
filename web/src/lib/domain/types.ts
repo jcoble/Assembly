@@ -85,6 +85,7 @@ export interface MachineSummary {
   engine?: string | null;
   status?: string | null;
   connected?: boolean;
+  reachable?: boolean;
   local?: boolean;
   version?: string | null;
 }

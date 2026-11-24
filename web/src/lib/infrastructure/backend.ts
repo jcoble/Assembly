@@ -4,6 +4,7 @@
  * reconnecting live on `assembly:backend-ready` events.
  */
 
+import { requestNativeBackend } from './nativeBridge';
 import {
   SocketChannel,
   type BackendBootstrap,
@@ -122,6 +123,9 @@ export class AssemblyBackendClient {
       return;
     }
 
+    // Ask the native GPUI host to push `window.__BACKEND__` (covers startup ordering and Vite HMR reloads).
+    requestNativeBackend();
+
     const startedAt = Date.now();
     this.pollTimer = setInterval(() => {
       const found = readBootstrapFromWindow();
@@ -139,6 +143,8 @@ export class AssemblyBackendClient {
           };
           for (const listener of this.statusListeners) listener(this.snapshot);
         }
+      } else {
+        requestNativeBackend();
       }
     }, STARTUP_RETRY_MS);
   }

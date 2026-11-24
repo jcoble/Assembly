@@ -103,30 +103,36 @@ impl Render for Header {
     /// With no session open it still draws, holding only the sessions button, so a column left closed can reopen.
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let look = Look::of(cx);
+        let hybrid = crate::features::shell::hybrid_frame::is_mounted(cx);
+        if hybrid && self.item.is_none() {
+            return div();
+        }
         // The look's crumb: a 32px ghost button that shows and hides the sessions column, in text-3.
-        let sessions = div().debug_selector(|| "toggle-sessions".into()).child(
-            quiet_icon_button("toggle-sessions", IconName::PanelLeft, cx)
-                .control(ids::SESSIONS_TOGGLE, "Show or hide the sessions column")
-                .tooltip("Sessions")
-                .on_click(|_, window, cx| {
-                    if let Some(dock) = CenterPanes::dock(cx) {
-                        dock.update(cx, |dock, cx| {
-                            dock.toggle_dock(DockPlacement::Left, window, cx)
-                        });
-                    }
-                }),
-        );
+        let sessions = (!hybrid).then(|| {
+            div().debug_selector(|| "toggle-sessions".into()).child(
+                quiet_icon_button("toggle-sessions", IconName::PanelLeft, cx)
+                    .control(ids::SESSIONS_TOGGLE, "Show or hide the sessions column")
+                    .tooltip("Sessions")
+                    .on_click(|_, window, cx| {
+                        if let Some(dock) = CenterPanes::dock(cx) {
+                            dock.update(cx, |dock, cx| {
+                                dock.toggle_dock(DockPlacement::Left, window, cx)
+                            });
+                        }
+                    }),
+            )
+        });
         // The crumb's line: 46 high under a hairline, its pieces 8 apart.
         let row = h_flex()
             .h(CRUMB_HEIGHT)
             .gap(SPACE[3])
-            .pl(SPACE[3])
+            .pl(if hybrid { SPACE[5] } else { SPACE[3] })
             .pr(SPACE[6])
             .border_b_1()
             .border_color(look.hairline)
             .text_role(TextRole::Body, cx)
             .text_color(look.text_2)
-            .child(sessions);
+            .when_some(sessions, |row, button| row.child(button));
         let Some(item) = &self.item else {
             return div().child(row);
         };

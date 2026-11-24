@@ -123,7 +123,6 @@
     width: 100%;
     height: 100%;
     background: var(--color-surface);
-    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     overflow: hidden;
     min-height: 0;

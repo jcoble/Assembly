@@ -12,7 +12,7 @@
   import { sessionsStore } from '$lib/application/sessions.svelte';
   import { workspaceStore } from '$lib/application/workspace.svelte';
   import { openNativeNewSession } from '$lib/infrastructure/nativeBridge';
-  import { projectInitials, projectLabel } from './format';
+  import { hasActiveFilters, machineChipLabel, projectInitials, projectLabel } from './format';
   import RailFilters from './RailFilters.svelte';
   import RailHeader from './RailHeader.svelte';
   import SessionContextMenu from './SessionContextMenu.svelte';
@@ -46,7 +46,12 @@
     const set = new Set<string>();
     for (const m of machinesStore.list) {
       if (m.local) continue;
-      if (m.connected === false || m.status === 'offline' || m.status === 'disconnected') {
+      if (
+        m.reachable === false ||
+        m.connected === false ||
+        m.status === 'offline' ||
+        m.status === 'disconnected'
+      ) {
         set.add(m.name);
       }
     }
@@ -83,7 +88,12 @@
   }
 </script>
 
-<div class="sessions-rail">
+<div
+  class="sessions-rail"
+  role="region"
+  aria-label="Sessions"
+  oncontextmenu={(event) => event.preventDefault()}
+>
   <RailHeader
     view={rail.view}
     filterText={rail.filterText}
@@ -108,7 +118,6 @@
     agents={rail.agents}
     filters={rail.filters}
     onChange={(filters) => rail.setFilters(filters)}
-    onClear={() => rail.clearFilters()}
   />
 
   {#if rail.error || rail.rowError}
@@ -129,7 +138,7 @@
       <div class="empty-state">Loading sessions...</div>
     {:else if rail.listItems.length === 0}
       <div class="empty-state">
-        {rail.filterText ? 'No matching sessions.' : 'No sessions yet.'}
+        {rail.filterText || hasActiveFilters(rail.filters) ? 'No matching sessions.' : 'No sessions yet.'}
       </div>
     {:else}
       {#each rail.listItems as item (item.key)}
@@ -165,7 +174,7 @@
             {/if}
             <span class="project-label">{projectLabel(item.label)}</span>
             {#if item.machines.length > 0}
-              <span class="machine-chip">{item.machines[0]}</span>
+              <span class="machine-chip">{machineChipLabel(item.machines[0])}</span>
             {/if}
             <span class="header-count">{item.count}</span>
           </button>

@@ -44,6 +44,17 @@ impl SharedWebView {
         }
     }
 
+    /// Re-injects the latest known `.NET` backend endpoint into the live WebView (used after SvelteKit mounts or
+    /// reloads via Vite HMR so `window.__BACKEND__` is never lost).
+    pub fn push_backend(cx: &App) {
+        let Some(state) = cx.try_global::<Self>() else {
+            return;
+        };
+        if let (Some(endpoint), Some(webview)) = (&state.endpoint, &state.webview) {
+            let _ = webview.evaluate_script(&backend_script(endpoint));
+        }
+    }
+
     /// Opens the single shared WebView in full-window transparent pass-through mode (`ASSEMBLY_HYBRID_SHELL=1`),
     /// forwarding SvelteKit's `window.ipc.postMessage(...)` slot/session messages through `ipc_tx`.
     pub fn open_hybrid(
@@ -68,6 +79,17 @@ impl SharedWebView {
                 cx.default_global::<Self>().last_error = Some(error.into());
                 None
             }
+        }
+    }
+
+    /// Moves keyboard focus into the hosted `WKWebView` when SvelteKit receives a click while GPUI Chat held
+    /// first responder (no-op if the WebView or one of its `<input>` descendants already holds focus).
+    pub fn focus_webview(cx: &App) {
+        if let Some(webview) = cx
+            .try_global::<Self>()
+            .and_then(|state| state.webview.as_ref())
+        {
+            super::passthrough_surface::focus_webview(webview);
         }
     }
 

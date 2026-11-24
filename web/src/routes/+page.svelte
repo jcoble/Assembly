@@ -156,7 +156,6 @@
     display: flex;
     flex-direction: column;
     background: var(--color-rail);
-    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     overflow: hidden;
     flex-shrink: 0;
@@ -176,7 +175,6 @@
     min-height: 0;
     background: transparent;
     border-radius: var(--radius-md);
-    border: 1px solid var(--color-border);
     pointer-events: none;
   }
 
@@ -186,7 +184,6 @@
     min-width: 0;
     min-height: 0;
     background: var(--color-surface-solid);
-    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     overflow: hidden;
     display: flex;

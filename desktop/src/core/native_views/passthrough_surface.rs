@@ -97,6 +97,11 @@ pub enum HybridIpcMessage {
     },
     /// Opens the native GPUIKit `NewSessionForm` draft composer inside `#native-chat-slot`.
     NewSession,
+    /// Sent by SvelteKit on mount/HMR reload when `window.__BACKEND__` needs to be pushed again.
+    Ready,
+    /// Moves native keyboard focus (`NSWindow.firstResponder`) into `WKWebView` when the user clicks
+    /// SvelteKit chrome while GPUI Chat held focus, so `Escape` and shortcuts reach the web side.
+    FocusWeb,
 }
 
 /// Full-window transparent `wry::WebView` with selective hit-test pass-through for the Chat hole.
@@ -227,6 +232,16 @@ impl NativeSurface for PassthroughSurface {
             host.release(&self.webview);
         }
         let _ = self.webview.set_visible(false);
+    }
+}
+
+/// Gives keyboard focus to the hosted `WebView` unless it (or a descendant input) already owns focus.
+pub(super) fn focus_webview(webview: &wry::WebView) {
+    #[cfg(target_os = "macos")]
+    macos_hit_test::focus_webview(webview);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = webview.focus();
     }
 }
 
@@ -375,6 +390,29 @@ mod macos_hit_test {
         }
     }
 
+    pub(super) fn focus_webview(webview: &wry::WebView) {
+        let wk = webview.webview();
+        unsafe {
+            let window: Id = msg_send![&*wk, window];
+            if window.is_null() {
+                return;
+            }
+            let responder: Id = msg_send![window, firstResponder];
+            let already_in_web = !responder.is_null() && {
+                let is_view: Bool = msg_send![responder, isKindOfClass: class!(NSView)];
+                if is_view.as_bool() {
+                    let descendant: Bool = msg_send![responder, isDescendantOf: &*wk];
+                    descendant.as_bool()
+                } else {
+                    false
+                }
+            };
+            if !already_in_web {
+                let _: Bool = msg_send![window, makeFirstResponder: &*wk];
+            }
+        }
+    }
+
     pub(super) fn mount(
         webview: &wry::WebView,
         geometry: Arc<Mutex<HoleGeometry>>,
@@ -498,5 +536,11 @@ mod tests {
 
         let new_session: HybridIpcMessage = serde_json::from_str(r#"{"t":"new_session"}"#).unwrap();
         assert_eq!(new_session, HybridIpcMessage::NewSession);
+
+        let ready: HybridIpcMessage = serde_json::from_str(r#"{"t":"ready"}"#).unwrap();
+        assert_eq!(ready, HybridIpcMessage::Ready);
+
+        let focus_web: HybridIpcMessage = serde_json::from_str(r#"{"t":"focus_web"}"#).unwrap();
+        assert_eq!(focus_web, HybridIpcMessage::FocusWeb);
     }
 }

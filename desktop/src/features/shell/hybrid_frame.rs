@@ -13,10 +13,12 @@ use futures_channel::mpsc::unbounded;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::core::intents::session_open::SessionOpenResult;
 use crate::core::native_views::native_view_id::NativeViewId;
 use crate::core::native_views::passthrough_surface::HybridIpcMessage;
 use crate::core::native_views::shared_webview::SharedWebView;
 use crate::core::native_views::views::NativeViews;
+use crate::core::state::selected_session::SelectedSession;
 use crate::core::theme::look::Look;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::view::session_pane::SessionPane;
@@ -33,6 +35,25 @@ pub fn enabled() -> bool {
 const TOP_BAR_DRAG_HEIGHT: Pixels = px(56.0);
 const CARD_CORNER_RADIUS: Pixels = px(10.0);
 
+/// Weak global handle to the single live `SessionPane` while `HybridFrame` is mounted so actions
+/// (`OpenSession`, `NewSessionForm` first-send handoff, deep links) find Chat without a GPUI `DockArea`.
+#[derive(Default)]
+struct HybridChatPane(Option<WeakEntity<SessionPane>>);
+
+impl Global for HybridChatPane {}
+
+/// Returns the active hybrid `SessionPane` when `HybridFrame` is mounted.
+pub fn chat_pane(cx: &App) -> Option<Entity<SessionPane>> {
+    cx.try_global::<HybridChatPane>()
+        .and_then(|holder| holder.0.as_ref())
+        .and_then(WeakEntity::upgrade)
+}
+
+/// True only while a live `HybridFrame` owns the window's `SessionPane` (false in legacy dock mode and unit tests).
+pub fn is_mounted(cx: &App) -> bool {
+    chat_pane(cx).is_some()
+}
+
 pub struct HybridFrame {
     /// The real native GPUIKit Chat pane rendered in Layer 1 behind SvelteKit's transparent Chat hole.
     chat: Entity<SessionPane>,
@@ -48,14 +69,33 @@ pub struct HybridFrame {
     _ipc: Task<()>,
     /// Releases the shared WebView handle cleanly before window teardown.
     _release: Subscription,
+    /// Logs session open refusals from `SessionPane` so hybrid diagnostics never fail silently.
+    _open_results: Subscription,
 }
 
 impl HybridFrame {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let chat = cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx));
+        cx.set_global(HybridChatPane(Some(chat.downgrade())));
         let (tx, mut rx) = unbounded::<HybridIpcMessage>();
         let webview_id = SharedWebView::open_hybrid(tx, window, cx);
-        let _release = cx.on_release(|_, cx| SharedWebView::close(cx));
+        let _open_results = cx.subscribe(
+            &SelectedSession::global(cx),
+            |_, _, event: &SessionOpenResult, _| {
+                if let Err(error) = &event.result {
+                    eprintln!(
+                        "[hybrid] session open failed ({:?}): {}: {}",
+                        event.key, error.code, error.message
+                    );
+                }
+            },
+        );
+        let _release = cx.on_release(|_, cx| {
+            if cx.has_global::<HybridChatPane>() {
+                cx.global_mut::<HybridChatPane>().0 = None;
+            }
+            SharedWebView::close(cx);
+        });
 
         let _ipc = cx.spawn_in(window, async move |this, cx| {
             while let Ok(message) = rx.recv().await {
@@ -76,6 +116,12 @@ impl HybridFrame {
                     HybridIpcMessage::NewSession => {
                         frame.show_new_session(window, cx);
                     }
+                    HybridIpcMessage::Ready => {
+                        SharedWebView::push_backend(cx);
+                    }
+                    HybridIpcMessage::FocusWeb => {
+                        SharedWebView::focus_webview(cx);
+                    }
                 });
                 if updated.is_err() {
                     return;
@@ -91,6 +137,7 @@ impl HybridFrame {
             should_move: false,
             _ipc,
             _release,
+            _open_results,
         }
     }
 

@@ -13,13 +13,13 @@
 :root[data-theme='glass'] {
   /* Outer dark canvas behind rounded panel cards (matches GPUI HybridFrame canvas 1:1) */
   --color-canvas: #000000;
-  /* Tightened Spotify surface ladder infused with macOS Glass translucency */
+  /* Tightened Spotify surface ladder matching GPUI Chat card (`#1c1e23`) seamlessly */
   --color-bg: #000000;
-  --color-surface: #14161b;
-  --color-surface-solid: #14161b;
-  --color-elevated: rgba(34, 37, 46, 0.86);
-  --color-rail: #121418;
-  --color-overlay: rgba(28, 31, 39, 0.94);
+  --color-surface: #181a1f;
+  --color-surface-solid: #181a1f;
+  --color-elevated: rgba(38, 41, 50, 0.88);
+  --color-rail: #17191e;
+  --color-overlay: rgba(30, 33, 41, 0.96);
   --color-glass-highlight: rgba(255, 255, 255, 0.07);
   --glass-blur: blur(22px) saturate(165%);
 

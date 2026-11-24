@@ -99,10 +99,11 @@ async function main(): Promise<void> {
       console.log(`hybrid:dev: reusing running Vite server at ${target.url}`);
     } else {
       console.log(`hybrid:dev: starting SvelteKit dev server at ${target.url}`);
-      ownedVite = spawn(
-        'pnpm',
-        ['--dir', join(root, 'web'), 'dev', '--host', target.host, '--port', target.port, '--strictPort'],
-        {
+      const viteArgs =
+        target.host === '127.0.0.1' && target.port === '5180'
+          ? ['--dir', join(root, 'web'), 'dev']
+          : ['--dir', join(root, 'web'), 'dev', '--host', target.host, '--port', target.port, '--strictPort'];
+      ownedVite = spawn('pnpm', viteArgs, {
           cwd: root,
           env: process.env,
           stdio: 'inherit',

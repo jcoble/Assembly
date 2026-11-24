@@ -68,7 +68,8 @@ class SessionsStore {
           this.byId = next;
           this.error = null;
           if (!this.selectedId && next.size > 0) {
-            const first = next.values().next().value;
+            const values = [...next.values()];
+            const first = values.find((s) => !s.machine) ?? values[0];
             if (first) this.select(first.id, first.machine ?? null, first.title ?? null);
           }
         } else if (event.type === 'change') {

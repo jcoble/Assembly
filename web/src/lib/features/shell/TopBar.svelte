@@ -46,7 +46,7 @@
     }
   }
   const leftSpacerWidth = $derived(
-    workspaceStore.railOpen ? Math.max(12, workspaceStore.railWidth - 110) : 12
+    workspaceStore.railOpen ? Math.max(12, workspaceStore.railWidth - 116) : 12
   );
 </script>
 

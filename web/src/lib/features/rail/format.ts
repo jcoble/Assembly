@@ -99,6 +99,10 @@ export function projectLabel(labelOrUrl: string): string {
   return parts[parts.length - 1] || labelOrUrl;
 }
 
+export function machineChipLabel(machine: string): string {
+  return machine === 'local' ? 'This Mac' : machine;
+}
+
 export function projectInitials(label: string): string {
   const clean = projectLabel(label).trim();
   if (!clean || clean.toLowerCase() === 'no project') return '';

@@ -66,6 +66,14 @@ export function openNativeNewSession(): void {
   postHybridIpc({ t: 'new_session' });
 }
 
+export function requestNativeBackend(): void {
+  postHybridIpc({ t: 'ready' });
+}
+
+export function focusNativeWebView(): void {
+  postHybridIpc({ t: 'focus_web' });
+}
+
 export interface NativeSlotBridge {
   setChatSlotElement: (el: HTMLElement | null) => void;
   syncNow: () => void;
@@ -100,9 +108,15 @@ export function createNativeSlotBridge(): NativeSlotBridge {
   }
 
   const onWindowResize = () => scheduleEmit();
+  const onPointerDown = (event: PointerEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(DRAG_REGION_SELECTOR)) return;
+    focusNativeWebView();
+  };
 
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', onWindowResize);
+    window.addEventListener('pointerdown', onPointerDown, true);
     mutationObserver = new MutationObserver(() => scheduleEmit());
     mutationObserver.observe(document.body, {
       childList: true,
@@ -136,6 +150,7 @@ export function createNativeSlotBridge(): NativeSlotBridge {
       mutationObserver?.disconnect();
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', onWindowResize);
+        window.removeEventListener('pointerdown', onPointerDown, true);
       }
       postHybridIpc({ t: 'slot', hole: null, occluders: [], drag_rects: [] });
     }

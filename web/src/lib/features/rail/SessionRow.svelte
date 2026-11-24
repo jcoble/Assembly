@@ -39,7 +39,17 @@
   const isPinned = $derived(entry.pinnedAt !== null && entry.pinnedAt !== undefined);
 </script>
 
-<div class="row-wrap" style:padding-left={`${indentPx}px`} class:child={entry.depth > 0}>
+<div
+  class="row-wrap"
+  role="group"
+  style:padding-left={`${indentPx}px`}
+  class:child={entry.depth > 0}
+  oncontextmenu={(event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenu(entry, event);
+  }}
+>
   {#if entry.depth > 0}
     <span class="tree-guide" style:left={`${Math.max(6, indentPx - 8)}px`} aria-hidden="true"></span>
   {/if}
@@ -52,10 +62,6 @@
     class:offline
     class:done={presence === 'done'}
     onclick={() => onSelect(entry)}
-    oncontextmenu={(event) => {
-      event.preventDefault();
-      onContextMenu(entry, event);
-    }}
   >
     <div class="lead">
       <ProviderIcon icon={entry.icon} remote={Boolean(entry.machine)} size={14} />

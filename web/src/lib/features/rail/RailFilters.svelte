@@ -1,261 +1,75 @@
 <script lang="ts">
   /**
-   * 1:1 `Provider` | `Status` | `Location` filter pills bar with multi-select glass popovers.
+   * 1:1 `Provider` | `Status` | `Location` Spotify-style drill-in filter pills bar.
+   * Uses the shared `FilterPills` UI component so Rail, Tasks, Workflows, and History
+   * all share identical pill interaction and keyboard/auto-close behavior.
    */
-  import { Check, X } from '@lucide/svelte';
-  import PopoverMenu from '$lib/ui/PopoverMenu.svelte';
-  import { hasActiveFilters, providerDisplayName } from './format';
+  import FilterPills, { type FilterPillGroup } from '$lib/ui/FilterPills.svelte';
+  import { providerDisplayName } from './format';
   import type { RailFilters, SessionMarkState } from './types';
 
   interface Props {
     agents: string[];
     filters: RailFilters;
     onChange: (next: RailFilters) => void;
-    onClear: () => void;
   }
 
-  let { agents, filters, onChange, onClear }: Props = $props();
+  let { agents, filters, onChange }: Props = $props();
 
-  type GroupId = 'provider' | 'status' | 'location';
-  let openGroup = $state<GroupId | null>(null);
-
-  const providerOptions = $derived.by(() => {
-    const ids = new Set<string>([...agents, ...filters.provider]);
-    return [...ids].map((value) => ({ value, label: providerDisplayName(value) }));
-  });
-
-  const statusOptions: { value: SessionMarkState; label: string }[] = [
+  const STATUS_OPTIONS = [
     { value: 'working', label: 'Working' },
     { value: 'done', label: 'Done' },
     { value: 'settled', label: 'Settled' }
-  ];
+  ] as const;
 
-  const locationOptions: { value: 'local' | 'remote'; label: string }[] = [
+  const LOCATION_OPTIONS = [
     { value: 'local', label: 'Local' },
     { value: 'remote', label: 'Remote' }
-  ];
+  ] as const;
 
-  function toggleProvider(value: string): void {
-    const next = filters.provider.includes(value)
-      ? filters.provider.filter((v) => v !== value)
-      : [...filters.provider, value];
-    onChange({ ...filters, provider: next });
+  const groups = $derived.by<FilterPillGroup[]>(() => {
+    const providerIds = [...new Set([...agents, ...filters.provider])];
+    return [
+      {
+        id: 'provider',
+        label: 'Provider',
+        options: providerIds.map((value) => ({ value, label: providerDisplayName(value) }))
+      },
+      {
+        id: 'status',
+        label: 'Status',
+        options: STATUS_OPTIONS
+      },
+      {
+        id: 'location',
+        label: 'Location',
+        options: LOCATION_OPTIONS
+      }
+    ];
+  });
+
+  const pillValue = $derived<Record<string, string[]>>({
+    provider: filters.provider,
+    status: filters.status,
+    location: filters.location
+  });
+
+  function handleChange(next: Record<string, string[]>): void {
+    onChange({
+      provider: next.provider ?? [],
+      status: (next.status ?? []) as SessionMarkState[],
+      location: (next.location ?? []) as ('local' | 'remote')[]
+    });
   }
-
-  function toggleStatus(value: SessionMarkState): void {
-    const next = filters.status.includes(value)
-      ? filters.status.filter((v) => v !== value)
-      : [...filters.status, value];
-    onChange({ ...filters, status: next });
-  }
-
-  function toggleLocation(value: 'local' | 'remote'): void {
-    const next = filters.location.includes(value)
-      ? filters.location.filter((v) => v !== value)
-      : [...filters.location, value];
-    onChange({ ...filters, location: next });
-  }
-
-  const anyActive = $derived(hasActiveFilters(filters));
 </script>
 
-<div class="filter-pills">
-  <!-- Provider pill -->
-  <div class="pill-anchor">
-    <button
-      type="button"
-      class="pill"
-      class:active={filters.provider.length > 0 || openGroup === 'provider'}
-      onpointerdown={(event) => event.stopPropagation()}
-      onclick={() => (openGroup = openGroup === 'provider' ? null : 'provider')}
-    >
-      <span>Provider</span>
-      {#if filters.provider.length > 0}
-        <span class="pill-count">{filters.provider.length}</span>
-      {/if}
-    </button>
-
-    <PopoverMenu open={openGroup === 'provider'} minWidth={168} onClose={() => (openGroup = null)}>
-      {#if providerOptions.length === 0}
-        <div class="empty-opt">No providers yet</div>
-      {:else}
-        {#each providerOptions as opt (opt.value)}
-          {@const checked = filters.provider.includes(opt.value)}
-          <button
-            type="button"
-            class="check-item"
-            class:checked
-            onclick={() => toggleProvider(opt.value)}
-          >
-            <span>{opt.label}</span>
-            {#if checked}<Check size={13} />{/if}
-          </button>
-        {/each}
-      {/if}
-    </PopoverMenu>
-  </div>
-
-  <!-- Status pill -->
-  <div class="pill-anchor">
-    <button
-      type="button"
-      class="pill"
-      class:active={filters.status.length > 0 || openGroup === 'status'}
-      onpointerdown={(event) => event.stopPropagation()}
-      onclick={() => (openGroup = openGroup === 'status' ? null : 'status')}
-    >
-      <span>Status</span>
-      {#if filters.status.length > 0}
-        <span class="pill-count">{filters.status.length}</span>
-      {/if}
-    </button>
-
-    <PopoverMenu open={openGroup === 'status'} minWidth={154} onClose={() => (openGroup = null)}>
-      {#each statusOptions as opt (opt.value)}
-        {@const checked = filters.status.includes(opt.value)}
-        <button
-          type="button"
-          class="check-item"
-          class:checked
-          onclick={() => toggleStatus(opt.value)}
-        >
-          <span>{opt.label}</span>
-          {#if checked}<Check size={13} />{/if}
-        </button>
-      {/each}
-    </PopoverMenu>
-  </div>
-
-  <!-- Location pill -->
-  <div class="pill-anchor">
-    <button
-      type="button"
-      class="pill"
-      class:active={filters.location.length > 0 || openGroup === 'location'}
-      onpointerdown={(event) => event.stopPropagation()}
-      onclick={() => (openGroup = openGroup === 'location' ? null : 'location')}
-    >
-      <span>Location</span>
-      {#if filters.location.length > 0}
-        <span class="pill-count">{filters.location.length}</span>
-      {/if}
-    </button>
-
-    <PopoverMenu open={openGroup === 'location'} minWidth={148} onClose={() => (openGroup = null)}>
-      {#each locationOptions as opt (opt.value)}
-        {@const checked = filters.location.includes(opt.value)}
-        <button
-          type="button"
-          class="check-item"
-          class:checked
-          onclick={() => toggleLocation(opt.value)}
-        >
-          <span>{opt.label}</span>
-          {#if checked}<Check size={13} />{/if}
-        </button>
-      {/each}
-    </PopoverMenu>
-  </div>
-
-  {#if anyActive}
-    <button type="button" class="clear-pill" title="Clear filters" onclick={onClear}>
-      <X size={11} />
-    </button>
-  {/if}
+<div class="rail-filter-pills">
+  <FilterPills label="Filter sessions" {groups} value={pillValue} onChange={handleChange} />
 </div>
 
 <style>
-  .filter-pills {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 4px 10px 8px;
-    flex-shrink: 0;
-  }
-
-  .pill-anchor {
-    position: relative;
-  }
-
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 25px;
-    padding: 0 10px;
-    border-radius: 999px;
-    border: 1px solid var(--color-border);
-    background: var(--color-elevated);
-    color: var(--color-text-2);
-    font-size: 11.5px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 100ms ease, color 100ms ease, border-color 100ms ease;
-  }
-
-  .pill:hover {
-    color: var(--color-text);
-    background: var(--color-selected);
-  }
-
-  .pill.active {
-    background: var(--color-good-bg);
-    border-color: rgba(30, 215, 96, 0.36);
-    color: var(--color-accent);
-  }
-
-  .pill-count {
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .clear-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    border: 1px solid var(--color-border);
-    background: transparent;
-    color: var(--color-text-3);
-    cursor: pointer;
-  }
-
-  .clear-pill:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
-  }
-
-  .check-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    height: 28px;
-    padding: 0 9px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--color-text-2);
-    font-size: 12px;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .check-item:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
-  }
-
-  .check-item.checked {
-    color: var(--color-accent);
-  }
-
-  .empty-opt {
-    padding: 6px 9px;
-    font-size: 11.5px;
-    color: var(--color-text-3);
+  .rail-filter-pills {
+    flex: 0 0 auto;
+    padding: 4px 12px 10px;
   }
 </style>

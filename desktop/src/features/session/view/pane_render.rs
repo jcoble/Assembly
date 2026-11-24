@@ -40,7 +40,7 @@ impl SessionPane {
             let request=intent.clone();
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
-                if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                if let Some(pane)=Self::find_active(cx) {
                     pane.update(cx,|pane,_|pane.uncover_route(request.route_machine.as_deref(),&request.id));
                     pane.update(cx,|pane,cx|pane.request_current_route(request.route_machine,request.id,request.request_id,
                         if request.historical {crate::core::intents::session_open::SessionOpenTarget::Historical} else {crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx));
@@ -62,7 +62,7 @@ impl SessionPane {
                 };
                 cx.defer(move |cx| {
                     let _ = handle.update(cx, |_, window, cx| {
-                        if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
+                        if let Some(pane) = Self::find_active(cx) {
                             pane.update(cx, |pane, _| pane.uncover(&request.key));
                             pane.update(cx, |pane, cx| pane.request_open(request, window, cx));
                         } else {
@@ -164,12 +164,18 @@ impl Panel for SessionPane {
 }
 
 impl SessionPane {
+    /// Finds the live Chat pane in either the classic GPUI dock (`CenterPanes`) or `HybridFrame`.
+    pub(crate) fn find_active(cx: &App) -> Option<Entity<Self>> {
+        CenterPanes::find::<Self>("Chat", cx)
+            .or_else(|| crate::features::shell::hybrid_frame::chat_pane(cx))
+    }
+
     /// Puts a new session's draft in the Chat pane, in front. False when there's no Chat pane to hold it.
     pub fn open_draft(draft: AnyView, window: &mut Window, cx: &mut App) -> bool {
         CenterPanes::open("Chat", window, cx, |window, cx| {
             cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx))
         });
-        let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) else {
+        let Some(pane) = Self::find_active(cx) else {
             return false;
         };
         pane.update(cx, |pane, cx| {
@@ -181,7 +187,7 @@ impl SessionPane {
 
     /// Takes this draft back out, showing the session under it.
     pub fn close_draft(draft: EntityId, cx: &mut App) {
-        if let Some(pane) = CenterPanes::find::<SessionPane>("Chat", cx) {
+        if let Some(pane) = Self::find_active(cx) {
             pane.update(cx, |pane, cx| {
                 if pane
                     .draft
