@@ -7,6 +7,7 @@
   import { preferencesStore } from '$lib/application/preferences.svelte';
   import { sessionsStore } from '$lib/application/sessions.svelte';
   import { createNativeSlotBridge, type NativeSlotBridge } from '$lib/infrastructure/nativeBridge';
+  import * as Tooltip from '$lib/ui/tooltip/index.js';
 
   let { children } = $props();
 
@@ -37,4 +38,6 @@
   });
 </script>
 
-{@render children()}
+<Tooltip.Provider delayDuration={0}>
+  {@render children()}
+</Tooltip.Provider>
