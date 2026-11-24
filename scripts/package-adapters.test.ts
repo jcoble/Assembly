@@ -153,6 +153,17 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   assert.equal(result.capabilities._meta.claudeCode.promptQueueing, true);
   assert.equal(readFileSync(seen, "utf8"), "initialize\n");
 }));
+test("smoke accepts stock claude-agent-acp 0.110+ on ACP v2 without legacy promptQueueing flag", () => fixture(async root => {
+  const entry = join(root, "claude-v2.cjs");
+  writeFileSync(entry, String.raw`process.stdin.once("data", data => console.log(JSON.stringify({
+    jsonrpc: "2.0",
+    id: JSON.parse(String(data)).id,
+    result: { protocolVersion: 2, info: { name: "@agentclientprotocol/claude-agent-acp", version: "0.110.1" }, capabilities: { session: { prompt: { image: {} } } } }
+  })));`);
+  const result = await smokeAdapter(entry, root);
+  assert.equal(result.protocolVersion, 2);
+  assert.equal(result.info.name, "@agentclientprotocol/claude-agent-acp");
+}));
 test("stdin stays open while the adapter initializes asynchronously", () => fixture(async root => {
   const entry = join(root, "async.cjs");
   writeFileSync(entry, String.raw`process.stdin.on("end", () => process.exit(0));

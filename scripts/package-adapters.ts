@@ -68,7 +68,8 @@ export function validateProviderAsset(manifestPath: string, archivePath: string,
 }
 
 // An adapter steers either through _session/steering (probed: an unknown session must be session-not-found) or by
-// taking a session/prompt while its turn runs (capabilities._meta.claudeCode.promptQueueing).
+// taking a session/prompt while its turn runs (legacy capabilities._meta.claudeCode.promptQueueing, or stock ACP v2
+// @agentclientprotocol/claude-agent-acp 0.110+ where mid-turn prompt queueing is built in permanently).
 export function smokeAdapter(entry: string, home: string): Promise<Record<string, any>> {
   return new Promise((resolveSmoke, rejectSmoke) => {
     for (const dir of [home, join(home, "codex"), join(home, "claude")]) mkdirSync(dir, { recursive: true });
@@ -104,7 +105,11 @@ export function smokeAdapter(entry: string, home: string): Promise<Record<string
               sessionId: "assembly-package-smoke-missing-session", prompt: [{ type: "text", text: "smoke" }],
               _meta: { steering: { idleBehavior: "promptRequired" } },
             } }) + "\n");
-          } else if (result.capabilities?._meta?.claudeCode?.promptQueueing === true) stop();
+          } else if (
+            result.capabilities?._meta?.claudeCode?.promptQueueing === true ||
+            (result.info?.name === "@agentclientprotocol/claude-agent-acp" &&
+              result.capabilities?._meta?.claudeCode?.promptQueueing !== false)
+          ) stop();
           else throw new Error("Adapter does not advertise ACP v2 steering: " + line);
         } else if (message.id === 2) {
           if (message.error?.code !== -32002 || message.error.code === -32601) throw new Error("Invalid ACP v2 steering route response: " + line);

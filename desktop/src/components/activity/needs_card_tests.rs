@@ -74,7 +74,10 @@ fn small_body(_: &mut Window, _: &mut Context<Host>) -> CardBody {
 impl Open<'_> {
     fn draw(&mut self) {
         self.cx.run_until_parked();
-        self.cx.update(|window, cx| window.draw(cx).clear(cx));
+        self.cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            window.draw(cx).clear(cx);
+        });
         self.cx.run_until_parked();
     }
 

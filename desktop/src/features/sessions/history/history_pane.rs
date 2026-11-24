@@ -183,6 +183,7 @@ impl BasePanel for HistoryPane {
         self.active = active;
         if !active {
             (self.clock, self.now) = (None, None);
+            cx.notify();
             return;
         }
         self.hold_clock(cx);

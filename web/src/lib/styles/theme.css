@@ -1,0 +1,115 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+ * Assembly Hybrid Theme — Glass Primary on Tightened Spotify Surface Ladder
+ *
+ * CRITICAL TRANSPARENCY INVARIANT:
+ * `html`, `body`, and `#native-chat-slot` MUST keep `background: transparent`
+ * so macOS `AssemblyPassthroughSurfaceView` lets native GPUIKit `SessionPane`
+ * shine through cleanly behind floating Glass chrome and overlays.
+ * ============================================================================ */
+
+:root,
+:root[data-theme='glass'] {
+  /* Outer dark canvas behind rounded panel cards (matches GPUI HybridFrame canvas 1:1) */
+  --color-canvas: #000000;
+  /* Tightened Spotify surface ladder matching GPUI Chat card (`#1c1e23`) seamlessly */
+  --color-bg: #000000;
+  --color-surface: #181a1f;
+  --color-surface-solid: #181a1f;
+  --color-elevated: rgba(38, 41, 50, 0.88);
+  --color-rail: #17191e;
+  --color-overlay: rgba(30, 33, 41, 0.96);
+  --color-glass-highlight: rgba(255, 255, 255, 0.07);
+  --glass-blur: blur(22px) saturate(165%);
+
+  /* Text hierarchy */
+  --color-text: #f3f5f8;
+  --color-text-2: #a7aebd;
+  --color-text-3: #6f7685;
+  --color-disabled-text: #595f6d;
+
+  /* Accent & semantic signals (Spotify emerald + calm semantic tones) */
+  --color-accent: #1ed760;
+  --color-on-accent: #09110c;
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-field-border: rgba(255, 255, 255, 0.13);
+  --color-focus: rgba(30, 215, 96, 0.42);
+  --color-selected: rgba(255, 255, 255, 0.11);
+  --color-hover: rgba(255, 255, 255, 0.06);
+
+  --color-live: #54b9ff;
+  --color-good: #1ed760;
+  --color-bad: #ff6d91;
+  --color-attention: #f5b95b;
+  --color-merged: #a371f7;
+  --color-attention-bg: rgba(245, 185, 91, 0.16);
+  --color-live-bg: rgba(84, 185, 255, 0.14);
+  --color-good-bg: rgba(30, 215, 96, 0.14);
+  --color-bad-bg: rgba(255, 109, 145, 0.14);
+  --color-scrim: rgba(6, 8, 12, 0.56);
+
+  /* Tightened spacing & radii (less spacey than stock Spotify) */
+  --top-bar-height: 44px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --row-pad-y: 5px;
+  --row-pad-x: 10px;
+}
+
+:root[data-theme='assembly'] {
+  --color-bg: #121212;
+  --color-surface: #181818;
+  --color-surface-solid: #181818;
+  --color-elevated: #242424;
+  --color-rail: #121212;
+  --color-overlay: #282828;
+  --color-glass-highlight: rgba(255, 255, 255, 0.05);
+  --glass-blur: none;
+}
+
+:root[data-theme='houston'] {
+  --color-bg: #101216;
+  --color-surface: #17191e;
+  --color-surface-solid: #17191e;
+  --color-elevated: #1e2127;
+  --color-rail: #17191e;
+  --color-overlay: #2a2d34;
+  --color-accent: #4bf3c8;
+  --color-focus: rgba(75, 243, 200, 0.45);
+  --color-glass-highlight: rgba(238, 240, 249, 0.05);
+  --glass-blur: none;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass-panel {
+  background: var(--color-surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-color: var(--color-border);
+}
+
+.glass-popover {
+  background: var(--color-overlay);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--color-field-border);
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 var(--color-glass-highlight);
+}

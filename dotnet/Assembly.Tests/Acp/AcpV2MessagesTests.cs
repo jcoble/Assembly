@@ -37,8 +37,10 @@ public sealed class AcpV2MessagesTests
     [Theory]
     [InlineData(CodexInitialize, SteerRoute.SteeringCall)]
     [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":true}}}}""", SteerRoute.PromptQueue)]
+    [InlineData("""{"protocolVersion":2,"info":{"name":"@agentclientprotocol/claude-agent-acp","version":"0.110.1"},"capabilities":{"session":{"prompt":{"image":{}}}},"_meta":{"authStatus":{}}}""", SteerRoute.PromptQueue)]
     [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":true}}},"_meta":{"steering":{"supported":true}}}""", SteerRoute.SteeringCall)]
     [InlineData("""{"protocolVersion":2,"capabilities":{"_meta":{"claudeCode":{"promptQueueing":false}}}}""", SteerRoute.None)]
+    [InlineData("""{"protocolVersion":2,"info":{"name":"@agentclientprotocol/claude-agent-acp","version":"0.110.1"},"capabilities":{"_meta":{"claudeCode":{"promptQueueing":false}}}}""", SteerRoute.None)]
     public void Steering_route_follows_what_initialize_advertises(string line, SteerRoute expected)
     {
         var response = JsonSerializer.Deserialize(line, AcpJsonContext.Default.InitializeResponse)!;

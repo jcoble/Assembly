@@ -63,14 +63,12 @@ impl ConnectionCut {
 impl SessionPane {
     /// A link can try its session: Chat exists and both sockets are up.
     pub(crate) fn can_open_links(cx: &App) -> bool {
-        ConnectionCut::capture(cx).is_ok()
-            && crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx).is_some()
+        ConnectionCut::capture(cx).is_ok() && Self::find_active(cx).is_some()
     }
 
     /// Chat has an open not answered yet, which another open would cancel.
     pub(crate) fn open_is_out(cx: &App) -> bool {
-        crate::core::ui::center_panes::CenterPanes::find::<Self>("Chat", cx)
-            .is_some_and(|pane| pane.read(cx).pending_open.is_some())
+        Self::find_active(cx).is_some_and(|pane| pane.read(cx).pending_open.is_some())
     }
 }
 pub(super) struct PendingOpen {

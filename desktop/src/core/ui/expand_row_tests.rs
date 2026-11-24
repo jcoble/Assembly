@@ -51,7 +51,10 @@ fn line(name: &'static str, height: f32) -> AnyElement {
 }
 
 fn drawn(name: &'static str, cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+    });
     cx.debug_bounds(name)
 }
 

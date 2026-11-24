@@ -7,6 +7,12 @@ pub(super) trait NativeSurface {
     /// Shows the view at `frame` in window coordinates, or hides it and frees its drawing surface when `None`.
     fn place(&mut self, frame: Option<Bounds<Pixels>>);
 
+    /// True when the native view uses `gpui-fast` window composition so GPUI overlays render above it without
+    /// hiding the surface. Non-composited surfaces stay hidden while overlays cover the window.
+    fn composites_under_overlays(&self) -> bool {
+        false
+    }
+
     /// Destroys the view; nothing is drawn or kept after.
     fn release(self: Box<Self>);
 }

@@ -6,5 +6,8 @@
 
 mod native_surface;
 pub mod native_view_id;
+pub mod passthrough_surface;
+pub mod shared_webview;
 pub mod view_state;
 pub mod views;
+mod web_bootstrap;

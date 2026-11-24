@@ -17,8 +17,7 @@ impl SessionPane {
         request_id: &str,
         cx: &App,
     ) -> Result<Entity<crate::features::session::composer::composer_view::Composer>, String> {
-        let pane =
-            CenterPanes::find::<SessionPane>("Chat", cx).ok_or("The Chat pane is unavailable.")?;
+        let pane = Self::find_active(cx).ok_or("The Chat pane is unavailable.")?;
         let pane = pane.read(cx);
         let matches = pane.active_reopen.as_ref().is_some_and(|(request, _)| {
             request.request_id == request_id
@@ -63,6 +62,12 @@ impl SessionPane {
         // Release this pane's borrow before request: an already open workspace may invoke commit synchronously.
         cx.defer(move |cx| {
             let _ = handle.update(cx, |_, window, cx| {
+                if crate::features::shell::hybrid_frame::is_mounted(cx) {
+                    // In hybrid mode SvelteKit owns the surrounding workbench panels; commit Chat directly
+                    // instead of asking GPUI's DockArea `WorkspaceCoordinator` to restore dock panels.
+                    let _ = pane.update(cx, |pane, cx| pane.commit_hybrid(serial, window, cx));
+                    return;
+                }
                 let Some(coordinator) = WorkspaceCoordinator::try_global(cx) else {
                     let _ = pane.update(cx, |pane, cx| {
                         pane.cancel_preparation(
@@ -275,6 +280,28 @@ impl SessionPane {
         self.refresh(Change::Nothing, cx);
         Ok(())
     }
+    /// Commits a prepared session directly when `HybridFrame` hosts `SessionPane` without a GPUI `WorkspaceCoordinator`.
+    fn commit_hybrid(&mut self, serial: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.preparation_current(serial, cx) {
+            return;
+        }
+        if let Err(reason) = self.commit_prepared(serial, window, cx) {
+            self.cancel_preparation(refused("workspace_refused", &reason), cx);
+            return;
+        }
+        let Some(pending) = self.pending_open.take() else {
+            return;
+        };
+        let Some(request) = pending.request else {
+            return;
+        };
+        self.active_reopen = Some((request.clone(), pending.window));
+        self.reopen_queued = None;
+        self._source_connections = pending.connections;
+        self.active_source_cut = Some(pending.cut);
+        self.open_result(request, Ok(()), cx);
+    }
+
     fn workspace_activated(
         &mut self,
         serial: u64,
