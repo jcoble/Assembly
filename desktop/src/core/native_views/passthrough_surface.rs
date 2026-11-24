@@ -37,6 +37,7 @@ pub struct LogicalRect {
 
 impl LogicalRect {
     /// True when logical window point `(px, py)` falls inside this non-empty rectangle.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn contains(&self, px: f64, py: f64) -> bool {
         self.width > 0.0
             && self.height > 0.0
@@ -70,6 +71,7 @@ pub struct HoleGeometry {
 impl HoleGeometry {
     /// True when a pointer at window top-left logical `(x, y)` should pass through the transparent
     /// `WKWebView` directly to GPUI underneath (either the native `SessionPane` or a titlebar drag strip).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn passes_through(&self, x: f64, y: f64) -> bool {
         let in_hole = self.hole.is_some_and(|hole| hole.contains(x, y));
         let in_drag = self.drag_rects.iter().any(|rect| rect.contains(x, y));
@@ -226,6 +228,7 @@ impl NativeSurface for PassthroughSurface {
         true
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     fn release(mut self: Box<Self>) {
         #[cfg(target_os = "macos")]
         if let Some(host) = self.mac_host.take() {
