@@ -85,12 +85,32 @@ class WorkspaceStore {
       (t) => t.kind === kind && (filePath ? t.filePath === filePath : true)
     );
     if (existing) {
+      if (kind === 'browser' && filePath) {
+        this.secondaryTabs = this.secondaryTabs.map((t) =>
+          t.id === existing.id ? { ...t, title, reloadTick: (t.reloadTick ?? 0) + 1 } : t
+        );
+      }
       this.activeSecondaryTabId = existing.id;
       return;
     }
     const id = `${kind}:${filePath ?? Date.now()}`;
-    this.secondaryTabs = [...this.secondaryTabs, { id, kind, title, filePath }];
+    this.secondaryTabs = [...this.secondaryTabs, { id, kind, title, filePath, reloadTick: 0 }];
     this.activeSecondaryTabId = id;
+  }
+
+  updateSecondaryTab(
+    id: string,
+    patch: Partial<Pick<SecondaryTab, 'title' | 'filePath'>> & { reload?: boolean }
+  ): void {
+    this.secondaryTabs = this.secondaryTabs.map((t) => {
+      if (t.id !== id) return t;
+      return {
+        ...t,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.filePath !== undefined ? { filePath: patch.filePath } : {}),
+        reloadTick: patch.reload ? (t.reloadTick ?? 0) + 1 : (t.reloadTick ?? 0)
+      };
+    });
   }
 
   selectSecondaryTab(id: string): void {

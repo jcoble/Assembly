@@ -2,8 +2,13 @@
   import { getContext } from 'svelte';
   import { connectionStore } from '$lib/application/connection.svelte';
   import { engineStore } from '$lib/application/engine.svelte';
+  import { sessionsStore } from '$lib/application/sessions.svelte';
   import { workspaceStore } from '$lib/application/workspace.svelte';
   import SessionsRail from '$lib/features/rail/SessionsRail.svelte';
+  import RunPanel from '$lib/features/run/RunPanel.svelte';
+  import RunShortcuts from '$lib/features/run/RunShortcuts.svelte';
+  import { formatPreviewTabTitle, normalizePreviewUrl } from '$lib/features/run/model';
+  import BrowserPreviewPane from '$lib/features/shell/BrowserPreviewPane.svelte';
   import RightPanel from '$lib/features/shell/RightPanel.svelte';
   import SplitSash from '$lib/features/shell/SplitSash.svelte';
   import StatusStrip from '$lib/features/shell/StatusStrip.svelte';
@@ -22,6 +27,20 @@
   const chatVisible = $derived(
     workspaceStore.homeOverlay === 'none' && !workspaceStore.secondaryExpanded
   );
+
+  const activeProjectRoot = $derived(
+    sessionsStore.selected?.root?.trim() ||
+      sessionsStore.list.find((session) => !session.machine && session.root)?.root?.trim() ||
+      ''
+  );
+
+  const activeProjectName = $derived(sessionsStore.selected?.project?.trim() ?? '');
+
+  function openRunPreview(url: string): void {
+    const safeUrl = normalizePreviewUrl(url);
+    if (!safeUrl) return;
+    workspaceStore.openSecondaryTab('browser', formatPreviewTabTitle(safeUrl), safeUrl);
+  }
 
   // Lease the local Engine's `runs` and `needs_me` scopes for live Top Bar & Rail counters.
   $effect(() => {
@@ -44,6 +63,12 @@
     }
   });
 </script>
+
+<RunShortcuts
+  root={activeProjectRoot}
+  projectName={activeProjectName}
+  onOpenPreview={openRunPreview}
+/>
 
 <div class="workbench">
   <TopBar />
@@ -103,15 +128,33 @@
         {/if}
 
         {#if workspaceStore.hasSecondaryPane && workspaceStore.activeSecondaryTab}
-          <section class="secondary-card">
-            <div class="secondary-placeholder">
-              <h3>{workspaceStore.activeSecondaryTab.title}</h3>
-              <p class="muted">
-                Side-by-side split pane (`{workspaceStore.activeSecondaryTab.kind}`) — Wave 1 lane
-                mounts here while native GPUIKit Chat stays live on the left.
-              </p>
-            </div>
-          </section>
+          {@const activeTab = workspaceStore.activeSecondaryTab}
+          {#if activeTab.kind === 'browser'}
+            <section class="secondary-card browser-card">
+              <BrowserPreviewPane
+                url={activeTab.filePath ?? ''}
+                title={activeTab.title}
+                reloadTick={activeTab.reloadTick ?? 0}
+                onNavigate={(nextUrl) =>
+                  workspaceStore.updateSecondaryTab(activeTab.id, {
+                    title: formatPreviewTabTitle(nextUrl),
+                    filePath: nextUrl,
+                    reload: true
+                  })}
+                onClose={() => workspaceStore.closeSecondaryTab(activeTab.id)}
+              />
+            </section>
+          {:else}
+            <section class="secondary-card">
+              <div class="secondary-placeholder">
+                <h3>{activeTab.title}</h3>
+                <p class="muted">
+                  Side-by-side split pane (`{activeTab.kind}`) — Wave 1 lane mounts here while
+                  native GPUIKit Chat stays live on the left.
+                </p>
+              </div>
+            </section>
+          {/if}
         {/if}
       {/if}
     </main>
@@ -125,7 +168,15 @@
       />
 
       <div class="right-column" style:width={`${workspaceStore.rightPanelWidth}px`}>
-        <RightPanel />
+        <RightPanel>
+          {#snippet run()}
+            <RunPanel
+              visible={workspaceStore.rightPanelOpen && workspaceStore.activeRightTab === 'run'}
+              onOpenPreview={openRunPreview}
+              onOpenTerminal={() => workspaceStore.selectRightTab('terminal')}
+            />
+          {/snippet}
+        </RightPanel>
       </div>
     {/if}
   </div>
@@ -193,6 +244,14 @@
     gap: 8px;
     padding: 20px;
     text-align: center;
+  }
+
+  .secondary-card.browser-card {
+    align-items: stretch;
+    justify-content: stretch;
+    gap: 0;
+    padding: 0;
+    text-align: left;
   }
 
   .secondary-placeholder {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import {
     Bot,
     Ellipsis,
@@ -20,6 +21,12 @@
     type RightOverflowTabId
   } from '$lib/application/workspace.svelte';
 
+  interface Props {
+    /** Mounted by the page route so `shell` never imports sibling feature slices directly. */
+    run?: Snippet;
+  }
+  let { run }: Props = $props();
+
   let overflowOpen = $state(false);
 
   const coreMeta: Record<RightCoreTabId, { label: string; icon: typeof FileText }> = {
@@ -40,6 +47,7 @@
   const isOverflowActive = $derived(
     (RIGHT_OVERFLOW_TABS as readonly string[]).includes(workspaceStore.activeRightTab)
   );
+  const showingRunPanel = $derived(workspaceStore.activeRightTab === 'run' && Boolean(run));
 </script>
 
 <aside class="right-panel card-panel">
@@ -109,10 +117,14 @@
     </div>
   </div>
 
-  <div class="right-body">
-    <div class="empty-hint">
-      <strong>{workspaceStore.activeRightTab}</strong> — Wave 1 lane mounts here (1:1 port of old app).
-    </div>
+  <div class="right-body" class:has-panel={showingRunPanel}>
+    {#if showingRunPanel && run}
+      {@render run()}
+    {:else}
+      <div class="empty-hint">
+        <strong>{workspaceStore.activeRightTab}</strong> — Wave 1 lane mounts here (1:1 port of old app).
+      </div>
+    {/if}
   </div>
 </aside>
 
@@ -218,8 +230,16 @@
 
   .right-body {
     flex: 1;
+    min-height: 0;
     padding: 12px;
     overflow-y: auto;
+  }
+
+  .right-body.has-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
   }
 
   .empty-hint {
