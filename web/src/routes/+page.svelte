@@ -2,8 +2,11 @@
   import { getContext } from 'svelte';
   import { connectionStore } from '$lib/application/connection.svelte';
   import { engineStore } from '$lib/application/engine.svelte';
+  import { sessionsStore } from '$lib/application/sessions.svelte';
   import { workspaceStore } from '$lib/application/workspace.svelte';
   import SessionsRail from '$lib/features/rail/SessionsRail.svelte';
+  import RunPanel from '$lib/features/run/RunPanel.svelte';
+  import { formatPreviewTabTitle } from '$lib/features/run/model';
   import RightPanel from '$lib/features/shell/RightPanel.svelte';
   import SplitSash from '$lib/features/shell/SplitSash.svelte';
   import StatusStrip from '$lib/features/shell/StatusStrip.svelte';
@@ -22,6 +25,21 @@
   const chatVisible = $derived(
     workspaceStore.homeOverlay === 'none' && !workspaceStore.secondaryExpanded
   );
+
+  const activeProjectRoot = $derived(
+    sessionsStore.selected?.root?.trim() ||
+      sessionsStore.list.find((session) => !session.machine && session.root)?.root?.trim() ||
+      ''
+  );
+
+  const activeProjectName = $derived(sessionsStore.selected?.project?.trim() ?? '');
+
+  function openRunPreview(url: string): void {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    if (!/^https?:\/\//i.test(trimmed)) return;
+    workspaceStore.openSecondaryTab('browser', formatPreviewTabTitle(trimmed), trimmed);
+  }
 
   // Lease the local Engine's `runs` and `needs_me` scopes for live Top Bar & Rail counters.
   $effect(() => {
@@ -125,7 +143,17 @@
       />
 
       <div class="right-column" style:width={`${workspaceStore.rightPanelWidth}px`}>
-        <RightPanel />
+        <RightPanel>
+          {#snippet run()}
+            <RunPanel
+              visible={workspaceStore.rightPanelOpen && workspaceStore.activeRightTab === 'run'}
+              root={activeProjectRoot}
+              projectName={activeProjectName}
+              onOpenPreview={openRunPreview}
+              onOpenTerminal={() => workspaceStore.selectRightTab('terminal')}
+            />
+          {/snippet}
+        </RightPanel>
       </div>
     {/if}
   </div>
