@@ -2,8 +2,12 @@
   import { getContext } from 'svelte';
   import { connectionStore } from '$lib/application/connection.svelte';
   import { engineStore } from '$lib/application/engine.svelte';
+  import { preferencesStore } from '$lib/application/preferences.svelte';
+  import { sessionsStore } from '$lib/application/sessions.svelte';
   import { workspaceStore } from '$lib/application/workspace.svelte';
   import SessionsRail from '$lib/features/rail/SessionsRail.svelte';
+  import RunPanel from '$lib/features/run/RunPanel.svelte';
+  import { handleRunKeydown, syncRunPreferences } from '$lib/features/run/store.svelte';
   import RightPanel from '$lib/features/shell/RightPanel.svelte';
   import SplitSash from '$lib/features/shell/SplitSash.svelte';
   import StatusStrip from '$lib/features/shell/StatusStrip.svelte';
@@ -35,6 +39,14 @@
     };
   });
 
+  // Keep saved Run actions synced from `.NET` SQLite preferences so global shortcuts work from any tab.
+  $effect(() => {
+    if (preferencesStore.loaded) {
+      void preferencesStore.values;
+      syncRunPreferences();
+    }
+  });
+
   // Bind `#native-chat-slot` whenever Chat is visible (including side-by-side with split chrome tabs!).
   $effect(() => {
     if (chatVisible && chatSlotEl) {
@@ -44,6 +56,8 @@
     }
   });
 </script>
+
+<svelte:window onkeydown={handleRunKeydown} />
 
 <div class="workbench">
   <TopBar />
@@ -125,7 +139,21 @@
       />
 
       <div class="right-column" style:width={`${workspaceStore.rightPanelWidth}px`}>
-        <RightPanel />
+        <RightPanel>
+          {#snippet panel(tab)}
+            {#if tab === 'run'}
+              <RunPanel
+                visible={workspaceStore.rightPanelOpen && tab === 'run'}
+                root={sessionsStore.selected?.root ?? ''}
+                ownedId={sessionsStore.selected?.id ?? null}
+              />
+            {:else}
+              <div class="right-placeholder">
+                <strong>{tab}</strong> — Wave 1 lane mounts here (1:1 port of old app).
+              </div>
+            {/if}
+          {/snippet}
+        </RightPanel>
       </div>
     {/if}
   </div>
@@ -206,6 +234,13 @@
     flex-shrink: 0;
     min-height: 0;
     height: 100%;
+  }
+
+  .right-placeholder {
+    padding: 12px;
+    color: var(--color-text-3);
+    font-size: 12px;
+    text-transform: capitalize;
   }
 
   .return-btn {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import {
     Bot,
     Ellipsis,
@@ -17,8 +18,14 @@
     RIGHT_OVERFLOW_TABS,
     workspaceStore,
     type RightCoreTabId,
-    type RightOverflowTabId
+    type RightOverflowTabId,
+    type RightPanelTabId
   } from '$lib/application/workspace.svelte';
+
+  interface Props {
+    panel?: Snippet<[RightPanelTabId]>;
+  }
+  let { panel }: Props = $props();
 
   let overflowOpen = $state(false);
 
@@ -109,11 +116,17 @@
     </div>
   </div>
 
-  <div class="right-body">
-    <div class="empty-hint">
-      <strong>{workspaceStore.activeRightTab}</strong> — Wave 1 lane mounts here (1:1 port of old app).
+  {#if panel}
+    <div class="right-body-slot">
+      {@render panel(workspaceStore.activeRightTab)}
     </div>
-  </div>
+  {:else}
+    <div class="right-body">
+      <div class="empty-hint">
+        <strong>{workspaceStore.activeRightTab}</strong> — Wave 1 lane mounts here (1:1 port of old app).
+      </div>
+    </div>
+  {/if}
 </aside>
 
 <style>
@@ -214,6 +227,15 @@
   .menu-item:hover,
   .menu-item.selected {
     background: var(--color-selected);
+  }
+
+  .right-body-slot {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .right-body {
