@@ -101,7 +101,12 @@ export async function hostResources(owner: LaneOwner, operation: 'reserve' | 'in
   } else {
     try {
       if (await run('lsof', ['-nP', '-iTCP:' + target.port, '-sTCP:LISTEN', '-Fp'])) throw Error('lane port is busy; no cleanup performed');
-    } catch (error) { if ((error as { code?: number }).code !== 1) throw error; }
+    } catch (error) {
+      const code = (error as { code?: number | string }).code;
+      if (code === 'ENOENT') {
+        if (await run('ss', ['-H', '-ltn', 'sport', '=', ':' + target.port])) throw Error('lane port is busy; no cleanup performed');
+      } else if (code !== 1) throw error;
+    }
   }
   const checkout = join(root, 'checkouts/build');
   if (await exists(join(checkout, '.git')) && await run('git', ['-C', checkout, 'status', '--porcelain']))

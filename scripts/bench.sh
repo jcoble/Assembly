@@ -41,13 +41,13 @@ stop_pid() {
 }
 
 down() {
-  local failed=0 dbus='' atspi='' host='' app='' backend='' xvfb='' tunnel='' openbox=''
+  local failed=0 dbus='' atspi='' host='' app='' backend='' vite='' xvfb='' tunnel='' openbox=''
   [ -f "$pids" ] && . "$pids"
   [ -z "$openbox" ] || stop_pid 'window manager' "$openbox" || failed=1
   # The window: ui-check.sh's own stop when its state is there, else the pids we copied from it.
   if [ -f "$DATA/ui-check/state" ]; then scripts/ui-check.sh stop || failed=1
   else
-    for name in app backend xvfb; do [ -z "${!name}" ] || stop_pid "window $name" "${!name}" || failed=1; done
+    for name in app backend vite xvfb; do [ -z "${!name}" ] || stop_pid "window $name" "${!name}" || failed=1; done
   fi
   [ -z "$tunnel" ] || stop_pid 'tunnel to the host' "$tunnel" || failed=1
   [ -z "$atspi" ] || stop_pid 'AT-SPI bus launcher' "$atspi" || failed=1
@@ -103,7 +103,7 @@ up() {
 
   say 'window'
   scripts/ui-check.sh start > "$bench/window.log"
-  grep -E '^(xvfb|app|backend)=' "$DATA/ui-check/state" >> "$pids"
+  grep -E '^(xvfb|vite|app|backend)=' "$DATA/ui-check/state" >> "$pids"
   display=$(sed -n 's/^DISPLAY=//p' "$DATA/ui-check/state")
   # agent-desktop lists windows through the window manager (_NET_CLIENT_LIST), so the display gets one: openbox, with
   # the window undecorated and at 0,0, where the tree's bounds and the screen agree.
