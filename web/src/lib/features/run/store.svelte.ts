@@ -18,8 +18,12 @@ import {
   commandWithEnv,
   describeRunProblem,
   folderName,
+  normalizePreviewUrl,
+  omitTerminalIds,
   parseRunDefinitions,
   parseRunRuns,
+  partitionSupersededRuns,
+  releaseSupersededTerminals,
   serializeRunDefinitions,
   serializeRunRuns
 } from './model';
@@ -226,25 +230,19 @@ class RunStore {
     this.ensureSyncedFromPreferences();
     const beforeDefs = this.definitions;
     const beforeRuns = this.runs;
+    const { supersededIds, remaining } = partitionSupersededRuns(beforeRuns, id);
     this.definitions = beforeDefs.filter((definition) => definition.id !== id);
-    const nextRuns: Record<string, RunRecord> = {};
-    let runsChanged = false;
-    for (const run of Object.values(beforeRuns)) {
-      if (run.stackId === id) {
-        runsChanged = true;
-        continue;
-      }
-      nextRuns[run.ownedId] = run;
-    }
-    this.runs = nextRuns;
+    this.runs = remaining;
     const defsSaved = await this.persistDefinitions();
     if (!defsSaved) {
       this.definitions = beforeDefs;
       this.runs = beforeRuns;
       return;
     }
-    if (runsChanged) {
+    if (supersededIds.length > 0) {
       await this.persistRuns();
+      await Promise.allSettled(supersededIds.map((terminalId) => closeRunTerminal(terminalId)));
+      this.terminals = omitTerminalIds(this.terminals, supersededIds);
     }
   }
 
@@ -256,25 +254,55 @@ class RunStore {
     this.busy = { ...this.busy, [id]: 'starting' };
     this.error = null;
     try {
+      // Close any superseded (exited or prior) terminal for this action so `.NET` `TerminalHost`
+      // releases its retained output ring (up to 16 MiB) before starting the replacement.
+      const { closedIds } = await releaseSupersededTerminals(
+        this.runs,
+        this.terminals,
+        id,
+        closeRunTerminal
+      );
+      if (closedIds.length > 0) {
+        this.terminals = omitTerminalIds(this.terminals, closedIds);
+        const closedSet = new Set(closedIds);
+        let closedActive = false;
+        const cleanedRuns: Record<string, RunRecord> = { ...this.runs };
+        for (const [ownedId, run] of Object.entries(cleanedRuns)) {
+          if (closedSet.has(ownedId) && !run.exited) {
+            cleanedRuns[ownedId] = { ...run, exited: true, exitCode: 0, signal: null };
+            closedActive = true;
+          }
+        }
+        if (closedActive) {
+          this.runs = cleanedRuns;
+        }
+      }
+
       const command = commandWithEnv(definition.script, definition.env);
       const info = await startRunTerminal(definition.cwd, command);
-      this.terminals = { ...this.terminals, [info.id]: info };
 
-      const nextRuns: Record<string, RunRecord> = {};
-      for (const run of Object.values(this.runs)) {
-        if (run.stackId === id) continue;
-        nextRuns[run.ownedId] = run;
+      const { supersededIds: lateSuperseded, remaining } = partitionSupersededRuns(this.runs, id);
+      const extraToClose = lateSuperseded.filter((terminalId) => !closedIds.includes(terminalId));
+      if (extraToClose.length > 0) {
+        await Promise.allSettled(extraToClose.map((terminalId) => closeRunTerminal(terminalId)));
       }
-      const alreadyExited = info.exitCode !== null && info.exitCode !== undefined;
-      nextRuns[info.id] = {
-        ownedId: info.id,
-        stackId: id,
-        startedAt: Date.now(),
-        exited: alreadyExited,
-        exitCode: alreadyExited ? (info.exitCode ?? 0) : null,
-        signal: null
+      this.terminals = {
+        ...omitTerminalIds(this.terminals, lateSuperseded),
+        [info.id]: info
       };
-      this.runs = nextRuns;
+
+      const alreadyExited = info.exitCode !== null && info.exitCode !== undefined;
+      this.runs = {
+        ...remaining,
+        [info.id]: {
+          ownedId: info.id,
+          stackId: id,
+          startedAt: Date.now(),
+          exited: alreadyExited,
+          exitCode: alreadyExited ? (info.exitCode ?? 0) : null,
+          signal: null
+        }
+      };
       await this.persistRuns();
       return true;
     } catch (err) {
@@ -285,6 +313,26 @@ class RunStore {
       delete nextBusy[id];
       this.busy = nextBusy;
     }
+  }
+
+  /** Start a saved action and open its preview URL if `openPreviewOnRun` is enabled. */
+  async launch(id: string, onOpenPreview?: (url: string) => void): Promise<boolean> {
+    this.ensureSyncedFromPreferences();
+    const definition = this.definitions.find((item) => item.id === id);
+    if (!definition || !definition.cwd.trim()) return false;
+    const started = await this.start(id);
+    if (!started) return false;
+    if (definition.openPreviewOnRun === true) {
+      const url = normalizePreviewUrl(definition.previewUrl);
+      if (url) onOpenPreview?.(url);
+    }
+    return true;
+  }
+
+  /** Stop an action if running, then launch it again with its current saved configuration. */
+  async restart(id: string, onOpenPreview?: (url: string) => void): Promise<boolean> {
+    await this.stop(id);
+    return this.launch(id, onOpenPreview);
   }
 
   async stop(id: string): Promise<void> {

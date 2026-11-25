@@ -17,8 +17,11 @@ import {
 import {
   commandWithEnv,
   isInsideRoot,
+  normalizePreviewUrl,
+  orderShortcutsForRoot,
   parseRunDefinitions,
   readEnvLines,
+  releaseSupersededTerminals,
   serializeRunDefinitions
 } from '../src/lib/features/run/model.ts';
 import {
@@ -26,7 +29,7 @@ import {
   RUN_OUTPUT_TAIL_LINES,
   appendOutputTail
 } from '../src/lib/features/run/runOutputTail.ts';
-import type { RunDefinition } from '../src/lib/features/run/types.ts';
+import type { RunDefinition, RunRecord, TerminalInfo } from '../src/lib/features/run/types.ts';
 
 function keydown(
   key: string,
@@ -143,4 +146,123 @@ test('isInsideRoot enforces path-separator boundaries', () => {
   assert.equal(isInsideRoot('/a/app', '/a/app'), true);
   assert.equal(isInsideRoot('/a/app/web', '/a/app/'), true);
   assert.equal(isInsideRoot('/a/app-two', '/a/app'), false);
+});
+
+// ── Regression tests for Codex review fixes ──────────────────────────────────
+
+test('releaseSupersededTerminals closes prior exited terminals and prunes cache without touching other actions', async () => {
+  const runs: Record<string, RunRecord> = {
+    'term-exited': {
+      ownedId: 'term-exited',
+      stackId: 'stack-build',
+      startedAt: 1000,
+      exited: true,
+      exitCode: 0,
+      signal: null
+    },
+    'term-other': {
+      ownedId: 'term-other',
+      stackId: 'stack-api',
+      startedAt: 2000,
+      exited: false,
+      exitCode: null,
+      signal: null
+    }
+  };
+  const terminals: Record<string, TerminalInfo> = {
+    'term-exited': {
+      id: 'term-exited',
+      cwd: '/repo',
+      shell: '/bin/bash',
+      command: 'pnpm build',
+      cols: 96,
+      rows: 28,
+      pid: 101,
+      startedAt: '2026-11-25T00:00:00Z',
+      exitCode: 0
+    },
+    'term-other': {
+      id: 'term-other',
+      cwd: '/repo',
+      shell: '/bin/bash',
+      command: 'pnpm dev',
+      cols: 96,
+      rows: 28,
+      pid: 202,
+      startedAt: '2026-11-25T00:00:01Z',
+      exitCode: null
+    }
+  };
+
+  const closed: string[] = [];
+  const result = await releaseSupersededTerminals(runs, terminals, 'stack-build', async (id) => {
+    closed.push(id);
+  });
+
+  assert.deepEqual(closed, ['term-exited']);
+  assert.deepEqual(result.closedIds, ['term-exited']);
+  assert.deepEqual(Object.keys(result.remainingRuns), ['term-other']);
+  assert.deepEqual(Object.keys(result.remainingTerminals), ['term-other']);
+});
+
+test('releaseSupersededTerminals tolerates already-closed backend errors and still cleans remaining state', async () => {
+  const runs: Record<string, RunRecord> = {
+    'term-gone': {
+      ownedId: 'term-gone',
+      stackId: 'stack-build',
+      startedAt: 1000,
+      exited: true,
+      exitCode: 1,
+      signal: null
+    }
+  };
+  const terminals: Record<string, TerminalInfo> = {
+    'term-gone': {
+      id: 'term-gone',
+      cwd: '/repo',
+      shell: '/bin/bash',
+      cols: 96,
+      rows: 28,
+      pid: 303,
+      startedAt: '2026-11-25T00:00:00Z',
+      exitCode: 1
+    }
+  };
+
+  const result = await releaseSupersededTerminals(runs, terminals, 'stack-build', async () => {
+    throw new Error('terminal_missing');
+  });
+
+  assert.deepEqual(result.closedIds, ['term-gone']);
+  assert.deepEqual(result.remainingRuns, {});
+  assert.deepEqual(result.remainingTerminals, {});
+});
+
+test('orderShortcutsForRoot prioritizes actions inside the active project root', () => {
+  const other: RunDefinition = {
+    id: 'stack-other',
+    name: 'Other',
+    script: 'echo other',
+    cwd: '/work/other-app',
+    keybinding: 'Ctrl+Shift+R'
+  };
+  const current: RunDefinition = {
+    id: 'stack-current',
+    name: 'Current',
+    script: 'echo current',
+    cwd: '/work/app/web',
+    keybinding: 'Ctrl+Shift+R'
+  };
+  const ordered = orderShortcutsForRoot([other, current], '/work/app');
+  assert.equal(ordered[0]?.id, 'stack-current');
+  assert.equal(ordered[1]?.id, 'stack-other');
+  assert.equal(matchKeybinding(keydown('r', { ctrl: true, shift: true }), ordered)?.id, 'stack-current');
+});
+
+test('normalizePreviewUrl allows only valid http(s) URLs', () => {
+  assert.equal(normalizePreviewUrl('  http://localhost:5173/app  '), 'http://localhost:5173/app');
+  assert.equal(normalizePreviewUrl('https://example.com'), 'https://example.com/');
+  assert.equal(normalizePreviewUrl('javascript:alert(1)'), null);
+  assert.equal(normalizePreviewUrl('file:///etc/passwd'), null);
+  assert.equal(normalizePreviewUrl('not a url'), null);
 });

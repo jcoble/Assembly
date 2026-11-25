@@ -385,6 +385,20 @@ export function buildRunRows(
   });
 }
 
+/** Validate and normalize a preview URL, allowing only `http:` and `https:` schemes. */
+export function normalizePreviewUrl(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 /** Extract a concise tab title for a configured preview URL. */
 export function formatPreviewTabTitle(url: string): string {
   const trimmed = url.trim();
@@ -394,4 +408,83 @@ export function formatPreviewTabTitle(url: string): string {
   } catch {
     return trimmed || 'Preview';
   }
+}
+
+/**
+ * Order saved definitions so actions inside `activeRoot` take shortcut precedence over
+ * other projects when two actions share the same keybinding.
+ */
+export function orderShortcutsForRoot(
+  definitions: readonly RunDefinition[],
+  activeRoot: string | null | undefined
+): RunDefinition[] {
+  const root = (activeRoot ?? '').trim();
+  if (!root) return [...definitions];
+  const inProject: RunDefinition[] = [];
+  const other: RunDefinition[] = [];
+  for (const definition of definitions) {
+    if (isInsideRoot(definition.cwd, root)) {
+      inProject.push(definition);
+    } else {
+      other.push(definition);
+    }
+  }
+  return [...inProject, ...other];
+}
+
+/**
+ * Split `runs` into terminal IDs superseded by `stackId` (both exited and active) and
+ * the remaining records belonging to other actions.
+ */
+export function partitionSupersededRuns(
+  runs: Readonly<Record<string, RunRecord>>,
+  stackId: string
+): { supersededIds: string[]; remaining: Record<string, RunRecord> } {
+  const supersededIds: string[] = [];
+  const remaining: Record<string, RunRecord> = {};
+  for (const run of Object.values(runs)) {
+    if (run.stackId === stackId) {
+      supersededIds.push(run.ownedId);
+    } else {
+      remaining[run.ownedId] = run;
+    }
+  }
+  return { supersededIds, remaining };
+}
+
+/** Return a copy of `terminals` with all given IDs removed. */
+export function omitTerminalIds(
+  terminals: Readonly<Record<string, TerminalInfo>>,
+  ids: readonly string[]
+): Record<string, TerminalInfo> {
+  if (ids.length === 0) return { ...terminals };
+  const drop = new Set(ids);
+  const next: Record<string, TerminalInfo> = {};
+  for (const [id, info] of Object.entries(terminals)) {
+    if (!drop.has(id)) next[id] = info;
+  }
+  return next;
+}
+
+/**
+ * Close every backend terminal associated with `stackId` (ignoring already-closed errors)
+ * so `TerminalHost` frees retained output rings before their run records are discarded.
+ */
+export async function releaseSupersededTerminals(
+  runs: Readonly<Record<string, RunRecord>>,
+  terminals: Readonly<Record<string, TerminalInfo>>,
+  stackId: string,
+  closeTerminal: (terminalId: string) => Promise<void>
+): Promise<{
+  closedIds: string[];
+  remainingRuns: Record<string, RunRecord>;
+  remainingTerminals: Record<string, TerminalInfo>;
+}> {
+  const { supersededIds, remaining } = partitionSupersededRuns(runs, stackId);
+  await Promise.allSettled(supersededIds.map((terminalId) => closeTerminal(terminalId)));
+  return {
+    closedIds: supersededIds,
+    remainingRuns: remaining,
+    remainingTerminals: omitTerminalIds(terminals, supersededIds)
+  };
 }

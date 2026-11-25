@@ -27,24 +27,19 @@
   import RunActionRow from './RunActionRow.svelte';
   import RunningProcessRow from './RunningProcessRow.svelte';
   import { watchRunOutput } from './api';
-  import { matchKeybinding } from './keybindingCapture';
-  import { RUN_DEFINITIONS_PREF_KEY, RUN_RUNS_PREF_KEY } from './model';
+  import { normalizePreviewUrl } from './model';
   import { runStore } from './store.svelte';
   import type { RunDefinition, RunRow } from './types';
 
   interface Props {
     /** True while the Run panel is visible on screen. */
     visible: boolean;
-    /** Active session or project working folder, or '' when none is selected. */
-    root: string;
-    /** Optional human-readable project name for empty-state copy. */
-    projectName?: string;
     /** Opens a configured preview URL without disrupting native GPUIKit Chat. */
     onOpenPreview?: (url: string) => void;
     /** Opens the Terminal view when clicking a running process title. */
     onOpenTerminal?: (terminalId: string) => void;
   }
-  let { visible, root, projectName = '', onOpenPreview, onOpenTerminal }: Props = $props();
+  let { visible, onOpenPreview, onOpenTerminal }: Props = $props();
 
   const cardClass = 'gap-2 bg-foreground/8';
 
@@ -58,19 +53,6 @@
 
   /** Latest bounded output tail per active `.NET` terminal id. */
   let tails = $state<Record<string, string[]>>({});
-
-  // Keep active project context updated for default folder & empty-state copy.
-  $effect(() => {
-    runStore.setContext(root, projectName);
-  });
-
-  // Hydrate and stay in sync with `.NET` preferences once loaded.
-  $effect(() => {
-    if (!preferencesStore.loaded) return;
-    const rawDefs = preferencesStore.get(RUN_DEFINITIONS_PREF_KEY);
-    const rawRuns = preferencesStore.get(RUN_RUNS_PREF_KEY);
-    runStore.syncFromPreferences(rawDefs, rawRuns);
-  });
 
   // Reconcile live `.NET` terminals once when the Run tab opens and backend is connected.
   $effect(() => {
@@ -94,8 +76,6 @@
       .filter((id): id is string => id !== null)
       .join(' ')
   );
-
-  const shortcutOrder = $derived(rows.map((row) => row.definition));
 
   // Follow live output on `/socket/terminal` ONLY while visible and at least one action is running.
   $effect(() => {
@@ -125,24 +105,19 @@
   });
 
   function openPreview(url: string | undefined): void {
-    const trimmed = (url ?? '').trim();
-    if (!trimmed) return;
-    onOpenPreview?.(trimmed);
+    const safeUrl = normalizePreviewUrl(url);
+    if (!safeUrl) return;
+    onOpenPreview?.(safeUrl);
   }
 
   async function run(definition: RunDefinition): Promise<void> {
     if (!backendConnected || !definition.cwd.trim()) return;
-    const started = await runStore.start(definition.id);
-    if (!started) return;
-    const url = (definition.previewUrl ?? '').trim();
-    if (definition.openPreviewOnRun === true && url) {
-      openPreview(url);
-    }
+    await runStore.launch(definition.id, onOpenPreview);
   }
 
   async function restart(row: RunRow): Promise<void> {
-    await runStore.stop(row.definition.id);
-    await run(row.definition);
+    if (!backendConnected || !row.definition.cwd.trim()) return;
+    await runStore.restart(row.definition.id, onOpenPreview);
   }
 
   async function confirmRemoval(): Promise<void> {
@@ -150,29 +125,7 @@
     await runStore.remove(removing.id);
     removing = null;
   }
-
-  function isTyping(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    if (target.isContentEditable) return true;
-    const tag = target.tagName;
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON';
-  }
-
-  function onKeydown(event: KeyboardEvent): void {
-    if (!backendConnected || event.defaultPrevented || isTyping(event.target)) return;
-    const matched = matchKeybinding(event, shortcutOrder);
-    if (!matched) return;
-    event.preventDefault();
-    const existingRow = rows.find((item) => item.definition.id === matched.id);
-    if (existingRow && (existingRow.state === 'running' || existingRow.state === 'starting')) {
-      void restart(existingRow);
-    } else {
-      void run(matched);
-    }
-  }
 </script>
-
-<svelte:window onkeydown={onKeydown} />
 
 <div class="flex h-full min-h-0 flex-col">
   <PanelHeader title="Run" count={rows.length}>
@@ -321,8 +274,7 @@
         Forget “{removing?.name ?? ''}”?
       </AlertDialog.Title>
       <AlertDialog.Description class="text-[13px] leading-[1.5] text-muted-foreground">
-        This forgets the saved command and nothing else. If it is running right now, the terminal
-        keeps running and stays in your session list — you would stop it there.
+        This forgets the saved command and closes its terminal if it is still open.
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer class="bg-transparent">

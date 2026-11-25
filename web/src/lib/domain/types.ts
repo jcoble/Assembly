@@ -104,6 +104,7 @@ export interface SecondaryTab {
   kind: SecondaryTabKind;
   title: string;
   filePath?: string;
+  reloadTick?: number;
 }
 
 export type RightCoreTabId = 'files' | 'git' | 'agents' | 'tasks';
