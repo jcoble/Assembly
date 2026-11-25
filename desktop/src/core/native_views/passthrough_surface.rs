@@ -106,23 +106,34 @@ pub enum HybridIpcMessage {
     FocusWeb,
 }
 
+/// Built hybrid surface + shared handles handed back to `SharedWebView`.
+pub(super) struct BuiltPassthrough {
+    pub(super) surface: PassthroughSurface,
+    pub(super) webview: Rc<wry::WebView>,
+    #[cfg(target_os = "linux")]
+    pub(super) linux_shape: super::linux_passthrough::LinuxShapeState,
+}
+
 /// Full-window transparent `wry::WebView` with selective hit-test pass-through for the Chat hole.
 pub(super) struct PassthroughSurface {
     webview: Rc<wry::WebView>,
     #[cfg(target_os = "macos")]
     mac_host: Option<macos_hit_test::PassthroughContainer>,
+    #[cfg(target_os = "linux")]
+    linux_shape: super::linux_passthrough::LinuxShapeState,
 }
 
 impl PassthroughSurface {
     /// Builds the full-window transparent `wry::WebView` directly as a child of `window` (bypassing `gpui-fast`'s
     /// opaque native-surface hitbox blocker), mounts it inside our `AssemblyPassthroughSurfaceView` container on
-    /// macOS, and wires `window.ipc.postMessage(...)` to update `HoleGeometry` synchronously.
+    /// macOS (or X11 XShape cutout host on Linux), and wires `window.ipc.postMessage(...)` to update `HoleGeometry`
+    /// synchronously.
     pub(super) fn build(
         endpoint: Option<&Endpoint>,
         ipc_tx: UnboundedSender<HybridIpcMessage>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<(Self, Rc<wry::WebView>), String> {
+    ) -> Result<BuiltPassthrough, String> {
         let geometry = Arc::new(Mutex::new(HoleGeometry::default()));
         let ipc_geometry = geometry.clone();
 
@@ -165,6 +176,9 @@ impl PassthroughSurface {
 
         builder = builder.with_url(hybrid_url());
 
+        #[cfg(target_os = "linux")]
+        let raw = super::linux_passthrough::build_webview(builder, window)?;
+        #[cfg(not(target_os = "linux"))]
         let raw = builder
             .build_as_child(&*window)
             .map_err(|error| error.to_string())?;
@@ -174,6 +188,9 @@ impl PassthroughSurface {
         #[cfg(target_os = "macos")]
         let mac_host = macos_hit_test::mount(&webview, geometry, is_dark);
 
+        #[cfg(target_os = "linux")]
+        let linux_shape = super::linux_passthrough::LinuxShapeState::new(geometry);
+
         #[cfg(not(target_os = "macos"))]
         {
             let _ = is_dark;
@@ -181,14 +198,18 @@ impl PassthroughSurface {
             let _ = webview.set_bounds(wry::Rect::default());
         }
 
-        Ok((
-            Self {
+        Ok(BuiltPassthrough {
+            surface: Self {
                 webview: webview.clone(),
                 #[cfg(target_os = "macos")]
                 mac_host,
+                #[cfg(target_os = "linux")]
+                linux_shape: linux_shape.clone(),
             },
             webview,
-        ))
+            #[cfg(target_os = "linux")]
+            linux_shape,
+        })
     }
 }
 
@@ -216,8 +237,17 @@ impl NativeSurface for PassthroughSurface {
                 };
                 let _ = self.webview.set_bounds(rect);
                 let _ = self.webview.set_visible(true);
+                #[cfg(target_os = "linux")]
+                {
+                    let w = f64::from(bounds.size.width).round() as i32;
+                    let h = f64::from(bounds.size.height).round() as i32;
+                    self.linux_shape.set_size(Some((w, h)));
+                    self.linux_shape.apply(&self.webview);
+                }
             }
             None => {
+                #[cfg(target_os = "linux")]
+                self.linux_shape.set_size(None);
                 let _ = self.webview.set_visible(false);
                 let _ = self.webview.set_bounds(wry::Rect::default());
             }
@@ -245,6 +275,8 @@ pub(super) fn focus_webview(webview: &wry::WebView) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = webview.focus();
+        #[cfg(target_os = "linux")]
+        super::linux_passthrough::pump_events();
     }
 }
 

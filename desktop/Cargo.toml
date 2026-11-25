@@ -30,6 +30,13 @@ objc2 = "=0.6.5"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAppearance", "NSView"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSGeometry", "NSKeyValueCoding", "NSString", "NSValue"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+cairo-rs = "=0.18.5"
+gdk = "=0.18.2"
+gdkx11 = "=0.18.2"
+gtk = "=0.18.2"
+raw-window-handle = "=0.6.2"
+
 [dev-dependencies]
 futures-executor = "=0.3.34"
 gpui = { package = "gpui-fast", version = "=0.1.13", features = ["test-support"] }

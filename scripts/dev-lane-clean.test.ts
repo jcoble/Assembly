@@ -85,3 +85,29 @@ test('a checkout with no ownership record is refused by name and nothing is touc
     assert.ok(existsSync(join(root, '.lane')));
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
+
+test('remote host cleanup falls back to ss when lsof is not installed', async () => {
+  const fixture = mkdtempSync(join(realpathSync(tmpdir()), 'lane-clean-ss-'));
+  const remoteHome = join(fixture, 'remote'), bin = join(fixture, 'bin');
+  const write = (file: string, text: string, mode = 0o600) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text, { mode }); };
+  const priorPath = process.env.PATH, priorBusy = process.env.CLEAN_TEST_SS_BUSY;
+  const owner: LaneOwner = { version: 1, name: 'ssbox', number: 2, owner: randomUUID(), host: hostname(), worktree: join(fixture, 'wt') };
+  try {
+    const remoteRoot = join(remoteHome, 'assembly-dotnet-ssbox');
+    write(join(remoteRoot, 'lane-owner.json'), JSON.stringify(owner));
+    write(join(remoteRoot, 'lane-number'), '2');
+    write(join(remoteHome, '.config/systemd/user/assembly-dotnet-ssbox.service'), 'unit');
+    write(join(bin, 'systemctl'), '#!/bin/sh\ncase "$*" in *show*) printf "MainPID=0\\nControlGroup=\\n";; esac\n', 0o755);
+    write(join(bin, 'ss'), '#!/bin/sh\nif [ "$CLEAN_TEST_SS_BUSY" = 1 ]; then echo "LISTEN 0 4096 127.0.0.1:9817"; fi\nexit 0\n', 0o755);
+    process.env.PATH = bin;
+    process.env.CLEAN_TEST_SS_BUSY = '1';
+    await assert.rejects(hostResources(owner, 'inspect', remoteHome), /port is busy/);
+    process.env.CLEAN_TEST_SS_BUSY = '0';
+    const inspected = await hostResources(owner, 'inspect', remoteHome);
+    assert.equal(inspected.missing, false);
+  } finally {
+    process.env.PATH = priorPath;
+    if (priorBusy === undefined) delete process.env.CLEAN_TEST_SS_BUSY; else process.env.CLEAN_TEST_SS_BUSY = priorBusy;
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});

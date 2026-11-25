@@ -67,6 +67,8 @@ pub struct HybridFrame {
     should_move: bool,
     /// Processes `window.ipc.postMessage` slot and session-selection messages; dropped with the frame.
     _ipc: Task<()>,
+    /// Pumps GTK/WebKitGTK events on Linux while `HybridFrame` is mounted; cancelled on drop.
+    _gtk_pump: Option<Task<()>>,
     /// Releases the shared WebView handle cleanly before window teardown.
     _release: Subscription,
     /// Logs session open refusals from `SessionPane` so hybrid diagnostics never fail silently.
@@ -102,6 +104,7 @@ impl HybridFrame {
                 let updated = this.update_in(cx, |frame, window, cx| match message {
                     HybridIpcMessage::Slot { hole, .. } => {
                         let next = hole.map(|rect| rect.to_gpui_bounds());
+                        SharedWebView::sync_shape(cx);
                         if frame.chat_rect != next {
                             frame.chat_rect = next;
                             cx.notify();
@@ -129,6 +132,21 @@ impl HybridFrame {
             }
         });
 
+        let _gtk_pump = if cfg!(target_os = "linux") {
+            Some(cx.spawn_in(window, async move |_, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(16))
+                        .await;
+                    if cx.update(|_, _| SharedWebView::pump_events()).is_err() {
+                        return;
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         Self {
             chat,
             creating: None,
@@ -136,6 +154,7 @@ impl HybridFrame {
             chat_rect: None,
             should_move: false,
             _ipc,
+            _gtk_pump,
             _release,
             _open_results,
         }

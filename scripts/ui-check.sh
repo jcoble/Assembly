@@ -23,7 +23,7 @@ export NUGET_HTTP_CACHE_PATH=$home/nuget-http-cache MSBUILDDISABLENODEREUSE=1
 
 stop() {
   # The app owns its backend; closing its stdin also stops it after a force quit.
-  for pid in "${app:-}" "${backend:-}" "${xvfb:-}"; do
+  for pid in "${app:-}" "${backend:-}" "${vite:-}" "${xvfb:-}"; do
     [ -n "$pid" ] || continue
     if kill -0 "$pid" 2>/dev/null; then
       kill "$pid"
@@ -72,7 +72,7 @@ JSON
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
     export ASSEMBLY_BACKEND_DIR=$home/backend
     unset WAYLAND_DISPLAY
-    app= backend= xvfb=
+    app= backend= vite= xvfb=
     trap 'stop' EXIT
     : > "$home/display"
     setsid Xvfb -displayfd 3 -screen 0 1710x990x24 -nolisten tcp 3> "$home/display" > "$home/xvfb.log" 2>&1 &
@@ -86,6 +86,23 @@ JSON
     [ -s "$home/display" ]
     export DISPLAY=:$(cat "$home/display")
     printf 'DISPLAY=%s\n' "$DISPLAY" >> "$state"
+    if [ "${ASSEMBLY_HYBRID_SHELL:-0}" = 1 ] || [ "${ASSEMBLY_HYBRID_SHELL:-}" = true ]; then
+      hybrid_port=${ASSEMBLY_HYBRID_PORT:-$((5180 + ${LANE_NUMBER:-0}))}
+      if [ ! -d "$root/web/node_modules" ]; then
+        pnpm --dir "$root/web" install --frozen-lockfile --prefer-offline > "$home/vite-install.log" 2>&1
+      fi
+      setsid pnpm --dir "$root/web" dev --host 127.0.0.1 --port "$hybrid_port" --strictPort > "$home/vite.log" 2>&1 < /dev/null &
+      vite=$!
+      printf 'vite=%s\n' "$vite" >> "$state"
+      for _ in {1..150}; do
+        curl -fsS "http://127.0.0.1:$hybrid_port/" >/dev/null 2>&1 && break
+        kill -0 "$vite"
+        sleep 0.2
+      done
+      curl -fsS "http://127.0.0.1:$hybrid_port/" >/dev/null 2>&1
+      export ASSEMBLY_HYBRID_SHELL=1
+      export ASSEMBLY_WEBVIEW_URL="http://127.0.0.1:$hybrid_port/"
+    fi
     setsid nohup nice -n 10 "$DATA/target/debug/assembly-desktop" > "$home/app.log" 2>&1 &
     app=$!
     printf 'app=%s\n' "$app" >> "$state"

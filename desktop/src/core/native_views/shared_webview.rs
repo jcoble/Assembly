@@ -26,6 +26,8 @@ pub struct SharedWebView {
     webview: Option<Rc<wry::WebView>>,
     /// Latest `.NET` backend port + token from `Launcher::start`'s ready callback.
     endpoint: Option<Endpoint>,
+    #[cfg(target_os = "linux")]
+    linux_shape: Option<super::linux_passthrough::LinuxShapeState>,
     /// Last initialization error when a native WebView could not be built (for example in headless tests).
     last_error: Option<SharedString>,
 }
@@ -41,6 +43,7 @@ impl SharedWebView {
         state.endpoint = Some(endpoint);
         if let Some(webview) = &state.webview {
             let _ = webview.evaluate_script(&js);
+            Self::pump_events();
         }
     }
 
@@ -52,6 +55,7 @@ impl SharedWebView {
         };
         if let (Some(endpoint), Some(webview)) = (&state.endpoint, &state.webview) {
             let _ = webview.evaluate_script(&backend_script(endpoint));
+            Self::pump_events();
         }
     }
 
@@ -67,19 +71,44 @@ impl SharedWebView {
         }
         let endpoint = cx.default_global::<Self>().endpoint.clone();
         match PassthroughSurface::build(endpoint.as_ref(), ipc_tx, window, cx) {
-            Ok((surface, webview)) => {
-                let id = cx.default_global::<NativeViews>().open(Box::new(surface));
+            Ok(built) => {
+                let id = cx
+                    .default_global::<NativeViews>()
+                    .open(Box::new(built.surface));
                 let state = cx.default_global::<Self>();
                 state.id = Some(id);
-                state.webview = Some(webview);
+                state.webview = Some(built.webview);
+                #[cfg(target_os = "linux")]
+                {
+                    state.linux_shape = Some(built.linux_shape);
+                }
                 state.last_error = None;
                 Some(id)
             }
             Err(error) => {
+                eprintln!("[hybrid] SharedWebView::open_hybrid failed: {error}");
                 cx.default_global::<Self>().last_error = Some(error.into());
                 None
             }
         }
+    }
+
+    /// Re-applies the Linux X11 visual + input shape cutout after a SvelteKit slot/occluder IPC update.
+    pub fn sync_shape(cx: &App) {
+        #[cfg(target_os = "linux")]
+        if let Some(state) = cx.try_global::<Self>()
+            && let (Some(shape), Some(webview)) = (&state.linux_shape, &state.webview)
+        {
+            shape.apply(webview);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = cx;
+    }
+
+    /// Pumps pending GTK/WebKitGTK main-context events on Linux (no-op on other platforms).
+    pub fn pump_events() {
+        #[cfg(target_os = "linux")]
+        super::linux_passthrough::pump_events();
     }
 
     /// Moves keyboard focus into the hosted `WKWebView` when SvelteKit receives a click while GPUI Chat held
@@ -116,6 +145,10 @@ impl SharedWebView {
             let state = cx.global_mut::<Self>();
             // Drop the `wry::WebView` clone before releasing the owning surface so native teardown runs immediately.
             state.webview = None;
+            #[cfg(target_os = "linux")]
+            {
+                state.linux_shape = None;
+            }
             state.id = None;
         }
         if let Some(id) = id {

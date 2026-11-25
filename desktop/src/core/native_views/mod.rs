@@ -4,6 +4,8 @@
 //! view API anywhere else. The terminal and browser lanes add their surfaces in this folder, and their features hold
 //! only a `NativeViewId`. The rules are g0-host#5 to g0-host#10 in the G0 host: behavior list (https://app.notion.com/p/409394b0689d81aebe92fabeebe583fd).
 
+#[cfg(target_os = "linux")]
+mod linux_passthrough;
 mod native_surface;
 pub mod native_view_id;
 pub mod passthrough_surface;

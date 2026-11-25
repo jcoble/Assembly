@@ -36,6 +36,7 @@ pub(super) fn hybrid_url() -> String {
     #[cfg(debug_assertions)]
     {
         std::env::var("ASSEMBLY_WEBVIEW_URL")
+            .or_else(|_| std::env::var("ASSEMBLY_HYBRID_URL"))
             .ok()
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty())
